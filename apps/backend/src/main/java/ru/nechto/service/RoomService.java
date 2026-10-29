@@ -3,20 +3,24 @@ package ru.nechto.service;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpStatus;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import ru.nechto.dto.request.CreateRoomRequest;
 import ru.nechto.dto.response.RoomResponse;
 import ru.nechto.dto.ws.HostChangedData;
+import ru.nechto.dto.ws.PlayerConnectionChangedData;
 import ru.nechto.dto.ws.PlayerJoinedData;
 import ru.nechto.dto.ws.PlayerLeftData;
 import ru.nechto.dto.ws.SettingsUpdatedData;
-import ru.nechto.dto.ws.PlayerConnectionChangedData;
 import ru.nechto.dto.ws.WsEvent;
+import ru.nechto.entity.RoomEntity;
+import ru.nechto.entity.RoomMapper;
+import ru.nechto.entity.RoomParticipantEntity;
 import ru.nechto.exception.ActiveRoomExistsException;
 import ru.nechto.exception.ForbiddenException;
-import ru.nechto.exception.InvalidRoomSettingsException;
 import ru.nechto.exception.RoomAlreadyStartedException;
 import ru.nechto.exception.RoomFullException;
 import ru.nechto.exception.RoomNotFoundException;
@@ -25,13 +29,13 @@ import ru.nechto.model.Room;
 import ru.nechto.model.RoomParticipant;
 import ru.nechto.model.RoomStatus;
 import ru.nechto.model.TelegramUser;
-import ru.nechto.repository.RoomRepository;
+import ru.nechto.repository.jpa.RoomJpaRepository;
+import ru.nechto.validation.InputValidator;
 import ru.nechto.websocket.RoomWebSocketBroadcaster;
 
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
@@ -45,271 +49,322 @@ public class RoomService {
     private static final int CODE_LENGTH = 6;
     private static final Duration INACTIVITY_TIMEOUT = Duration.ofMinutes(30);
 
-    private final RoomRepository roomRepository;
+    private final RoomJpaRepository roomJpaRepository;
     private final RoomWebSocketBroadcaster broadcaster;
     private final SecureRandom random = new SecureRandom();
 
     @Value("${nechto.telegram.bot-username:StayAwayGameBot}")
     private String botUsername;
 
-    public RoomService(RoomRepository roomRepository, RoomWebSocketBroadcaster broadcaster) {
-        this.roomRepository = roomRepository;
+    public RoomService(RoomJpaRepository roomJpaRepository, RoomWebSocketBroadcaster broadcaster) {
+        this.roomJpaRepository = roomJpaRepository;
         this.broadcaster = broadcaster;
     }
 
+    @Transactional
     public RoomResponse createRoom(TelegramUser creator, CreateRoomRequest request) {
         if (creator == null || creator.telegramId() == null || creator.telegramId().isBlank()) {
             throw new IllegalArgumentException("Creator telegramId is required");
         }
 
-        // Validate creator does not have an active room
-        Optional<Room> activeRoom = roomRepository.findActiveByCreatorId(creator.telegramId());
-        if (activeRoom.isPresent()) {
+        // Validate creator display name
+        String validCreatorName = InputValidator.validatePlayerName(creator.displayName());
+
+        // Check if creator already has an active room
+        List<RoomEntity> activeRooms = roomJpaRepository.findActiveByCreatorId(creator.telegramId());
+        if (!activeRooms.isEmpty()) {
             throw new ActiveRoomExistsException();
         }
 
-        String name = request.getName() != null ? request.getName().trim() : "";
-        if (name.isEmpty() || name.length() > 32) {
-            throw new InvalidRoomSettingsException("Название комнаты должно содержать от 1 до 32 символов");
-        }
-
+        // Validate name and maxPlayers
+        String name = InputValidator.validateRoomName(request.getName());
         int maxPlayers = request.getMaxPlayers() != null ? request.getMaxPlayers() : 8;
-        if (maxPlayers < 4 || maxPlayers > 12) {
-            throw new InvalidRoomSettingsException("Количество игроков должно быть от 4 до 12");
-        }
+        InputValidator.validateMaxPlayers(maxPlayers, 1);
 
         String code = generateUniqueRoomCode();
-        String inviteLink = "https://t.me/" + botUsername + "/app?startapp=" + code;
         Instant now = Instant.now();
 
-        RoomParticipant creatorParticipant = new RoomParticipant(
-                creator.telegramId(),
-                creator.username(),
-                creator.displayName(),
-                true,
-                ConnectionStatus.ONLINE,
-                now,
-                null
-        );
-
-        Room room = new Room(
+        RoomEntity roomEntity = new RoomEntity(
                 UUID.randomUUID(),
                 code,
-                inviteLink,
                 name,
                 creator.telegramId(),
                 RoomStatus.LOBBY,
                 maxPlayers,
                 now,
+                now,
                 now
         );
-        room.getPlayers().add(creatorParticipant);
 
-        roomRepository.save(room);
+        RoomParticipantEntity creatorParticipant = new RoomParticipantEntity(
+                UUID.randomUUID(),
+                roomEntity,
+                creator.telegramId(),
+                creator.username(),
+                validCreatorName,
+                true,
+                ConnectionStatus.ONLINE,
+                now,
+                null
+        );
+        roomEntity.addParticipant(creatorParticipant);
+
+        RoomEntity saved = roomJpaRepository.save(roomEntity);
         log.info("Room created: code={}, creatorId={}, name={}", code, creator.telegramId(), name);
-        return RoomResponse.from(room);
+        return RoomResponse.from(RoomMapper.toDomain(saved, botUsername));
     }
 
+    @Transactional(readOnly = true)
     public RoomResponse getRoomByCode(String code) {
-        Room room = findRoomOrThrow(code);
-        return RoomResponse.from(room);
+        String normalizedCode = InputValidator.validateAndNormalizeRoomCode(code);
+        RoomEntity room = findRoomOrThrow(normalizedCode);
+        return RoomResponse.from(RoomMapper.toDomain(room, botUsername));
     }
 
+    @Transactional(readOnly = true)
     public Room findRawRoomByCode(String code) {
-        return findRoomOrThrow(code);
+        String normalizedCode = InputValidator.validateAndNormalizeRoomCode(code);
+        RoomEntity room = findRoomOrThrow(normalizedCode);
+        return RoomMapper.toDomain(room, botUsername);
     }
 
+    @Transactional
     public RoomResponse joinRoom(String code, TelegramUser user) {
         if (user == null || user.telegramId() == null || user.telegramId().isBlank()) {
             throw new IllegalArgumentException("User telegramId is required");
         }
 
-        Room room = findRoomOrThrow(code);
-        synchronized (room) {
-            Instant now = Instant.now();
-            Optional<RoomParticipant> existingOpt = room.getPlayers().stream()
-                    .filter(p -> user.telegramId().equals(p.getTelegramId()))
-                    .findFirst();
+        String normalizedCode = InputValidator.validateAndNormalizeRoomCode(code);
+        String validDisplayName = InputValidator.validatePlayerName(user.displayName());
 
-            if (existingOpt.isPresent()) {
-                // Idempotent reconnection
-                RoomParticipant existing = existingOpt.get();
-                existing.setConnectionStatus(ConnectionStatus.ONLINE);
-                existing.setDisconnectedAt(null);
-                if (user.username() != null && !user.username().isBlank()) {
-                    existing.setUsername(user.username());
-                }
-                if (user.displayName() != null && !user.displayName().isBlank()) {
-                    existing.setDisplayName(user.displayName());
-                }
-                room.setLastActivityAt(now);
+        // Pessimistic lock on the room row: SELECT ... FOR UPDATE
+        RoomEntity room = roomJpaRepository.findByCodeForUpdate(normalizedCode)
+                .filter(r -> r.getStatus() != RoomStatus.ARCHIVED)
+                .orElseThrow(RoomNotFoundException::new);
 
-                broadcaster.broadcastToRoom(room.getCode(), WsEvent.of("room:player_connection_changed",
-                        new PlayerConnectionChangedData(user.telegramId(), ConnectionStatus.ONLINE)));
+        Instant now = Instant.now();
+        Optional<RoomParticipantEntity> existingOpt = room.getParticipants().stream()
+                .filter(p -> user.telegramId().equals(p.getTelegramId()))
+                .findFirst();
 
-                log.info("Player reconnected to room: code={}, telegramId={}", room.getCode(), user.telegramId());
-                return RoomResponse.from(room);
+        if (existingOpt.isPresent()) {
+            // Idempotent reconnection
+            RoomParticipantEntity existing = existingOpt.get();
+            existing.setConnectionStatus(ConnectionStatus.ONLINE);
+            existing.setDisconnectedAt(null);
+            if (user.username() != null && !user.username().isBlank()) {
+                existing.setUsername(user.username());
             }
-
-            // New participant joining
-            if (room.getStatus() != RoomStatus.LOBBY) {
-                throw new RoomAlreadyStartedException();
+            if (!validDisplayName.isBlank()) {
+                existing.setDisplayName(validDisplayName);
             }
-
-            if (room.getPlayers().size() >= room.getMaxPlayers()) {
-                throw new RoomFullException();
-            }
-
-            RoomParticipant newParticipant = new RoomParticipant(
-                    user.telegramId(),
-                    user.username(),
-                    user.displayName(),
-                    false,
-                    ConnectionStatus.ONLINE,
-                    now,
-                    null
-            );
-
-            room.getPlayers().add(newParticipant);
+            room.setUpdatedAt(now);
             room.setLastActivityAt(now);
+            roomJpaRepository.save(room);
 
-            RoomResponse response = RoomResponse.from(room);
+            broadcastAfterCommit(() -> broadcaster.broadcastToRoom(room.getCode(),
+                    WsEvent.of("room:player_connection_changed",
+                            new PlayerConnectionChangedData(user.telegramId(), ConnectionStatus.ONLINE))));
 
-            // Broadcast room:player_joined immediately to all participants
-            broadcaster.broadcastToRoom(room.getCode(), WsEvent.of("room:player_joined",
-                    new PlayerJoinedData(newParticipant, response)));
-
-            log.info("Player joined room: code={}, telegramId={}, totalPlayers={}",
-                    room.getCode(), user.telegramId(), room.getPlayers().size());
-
-            return response;
+            log.info("Player reconnected: code={}, telegramId={}", room.getCode(), user.telegramId());
+            return RoomResponse.from(RoomMapper.toDomain(room, botUsername));
         }
+
+        // New participant
+        if (room.getStatus() != RoomStatus.LOBBY) {
+            throw new RoomAlreadyStartedException();
+        }
+
+        if (room.getParticipants().size() >= room.getMaxPlayers()) {
+            throw new RoomFullException();
+        }
+
+        RoomParticipantEntity newParticipant = new RoomParticipantEntity(
+                UUID.randomUUID(),
+                room,
+                user.telegramId(),
+                user.username(),
+                validDisplayName,
+                false,
+                ConnectionStatus.ONLINE,
+                now,
+                null
+        );
+
+        room.addParticipant(newParticipant);
+        room.setUpdatedAt(now);
+        room.setLastActivityAt(now);
+        roomJpaRepository.save(room);
+
+        Room domainRoom = RoomMapper.toDomain(room, botUsername);
+        RoomParticipant domainParticipant = RoomMapper.toDomain(newParticipant);
+        RoomResponse response = RoomResponse.from(domainRoom);
+
+        // Broadcast room:player_joined strictly after transaction commit
+        broadcastAfterCommit(() -> broadcaster.broadcastToRoom(room.getCode(),
+                WsEvent.of("room:player_joined", new PlayerJoinedData(domainParticipant, response))));
+
+        log.info("Player joined: code={}, telegramId={}, totalPlayers={}",
+                room.getCode(), user.telegramId(), room.getParticipants().size());
+
+        return response;
     }
 
+    @Transactional
     public RoomResponse leaveRoom(String code, String telegramId) {
         if (telegramId == null || telegramId.isBlank()) {
             throw new IllegalArgumentException("telegramId is required");
         }
 
-        Room room = findRoomOrThrow(code);
-        synchronized (room) {
-            Optional<RoomParticipant> leavingOpt = room.getPlayers().stream()
-                    .filter(p -> telegramId.equals(p.getTelegramId()))
-                    .findFirst();
+        String normalizedCode = InputValidator.validateAndNormalizeRoomCode(code);
 
-            if (leavingOpt.isEmpty()) {
-                return RoomResponse.from(room);
-            }
+        // Pessimistic lock on the room row
+        RoomEntity room = roomJpaRepository.findByCodeForUpdate(normalizedCode)
+                .filter(r -> r.getStatus() != RoomStatus.ARCHIVED)
+                .orElseThrow(RoomNotFoundException::new);
 
-            RoomParticipant leaving = leavingOpt.get();
-            room.getPlayers().remove(leaving);
-            Instant now = Instant.now();
-            room.setLastActivityAt(now);
+        Optional<RoomParticipantEntity> leavingOpt = room.getParticipants().stream()
+                .filter(p -> telegramId.equals(p.getTelegramId()))
+                .findFirst();
 
-            boolean wasCreator = leaving.isCreator() || telegramId.equals(room.getCreatorId());
-            String newCreatorId = null;
+        if (leavingOpt.isEmpty()) {
+            return RoomResponse.from(RoomMapper.toDomain(room, botUsername));
+        }
 
-            if (wasCreator) {
-                if (!room.getPlayers().isEmpty()) {
-                    RoomParticipant newHost = room.getPlayers().stream()
-                            .min(Comparator.comparing(RoomParticipant::getJoinedAt))
-                            .orElse(room.getPlayers().get(0));
+        RoomParticipantEntity leaving = leavingOpt.get();
+        room.removeParticipant(leaving);
+        Instant now = Instant.now();
+        room.setUpdatedAt(now);
+        room.setLastActivityAt(now);
 
-                    newHost.setCreator(true);
-                    room.setCreatorId(newHost.getTelegramId());
-                    newCreatorId = newHost.getTelegramId();
+        boolean wasCreator = leaving.isCreator() || telegramId.equals(room.getCreatorTelegramId());
+        String newCreatorId = null;
 
-                    broadcaster.broadcastToRoom(room.getCode(), WsEvent.of("room:host_changed",
-                            new HostChangedData(telegramId, newCreatorId, new ArrayList<>(room.getPlayers()))));
-                    log.info("Room host migrated: code={}, oldCreator={}, newCreator={}",
-                            room.getCode(), telegramId, newCreatorId);
-                } else {
-                    if (room.getStatus() == RoomStatus.LOBBY) {
-                        roomRepository.delete(room.getCode());
-                        log.info("Empty room deleted: code={}", room.getCode());
-                    }
+        if (wasCreator) {
+            if (!room.getParticipants().isEmpty()) {
+                RoomParticipantEntity nextHost = room.getParticipants().stream()
+                        .min(Comparator.comparing(RoomParticipantEntity::getJoinedAt))
+                        .orElse(room.getParticipants().get(0));
+
+                nextHost.setCreator(true);
+                room.setCreatorTelegramId(nextHost.getTelegramId());
+                newCreatorId = nextHost.getTelegramId();
+
+                final String finalNewCreatorId = newCreatorId;
+                List<RoomParticipant> remainingParticipants = room.getParticipants().stream()
+                        .map(RoomMapper::toDomain)
+                        .toList();
+
+                broadcastAfterCommit(() -> broadcaster.broadcastToRoom(room.getCode(),
+                        WsEvent.of("room:host_changed",
+                                new HostChangedData(telegramId, finalNewCreatorId, remainingParticipants))));
+
+                log.info("Host migrated: code={}, oldCreator={}, newCreator={}",
+                        room.getCode(), telegramId, newCreatorId);
+            } else {
+                if (room.getStatus() == RoomStatus.LOBBY) {
+                    roomJpaRepository.delete(room);
+                    log.info("Empty room deleted: code={}", room.getCode());
                 }
             }
-
-            RoomResponse response = RoomResponse.from(room);
-            broadcaster.broadcastToRoom(room.getCode(), WsEvent.of("room:player_left",
-                    new PlayerLeftData(telegramId, newCreatorId, response)));
-
-            return response;
         }
+
+        if (!room.getParticipants().isEmpty() || room.getStatus() != RoomStatus.LOBBY) {
+            roomJpaRepository.save(room);
+        }
+
+        Room domainRoom = RoomMapper.toDomain(room, botUsername);
+        RoomResponse response = RoomResponse.from(domainRoom);
+
+        final String finalNewCreatorId = newCreatorId;
+        broadcastAfterCommit(() -> broadcaster.broadcastToRoom(room.getCode(),
+                WsEvent.of("room:player_left", new PlayerLeftData(telegramId, finalNewCreatorId, response))));
+
+        return response;
     }
 
+    @Transactional
     public RoomResponse updateSettings(String code, String telegramId, int maxPlayers) {
-        Room room = findRoomOrThrow(code);
-        synchronized (room) {
-            if (room.getStatus() != RoomStatus.LOBBY) {
-                throw new RoomAlreadyStartedException("Настройки комнаты можно изменять только в режиме LOBBY");
-            }
+        String normalizedCode = InputValidator.validateAndNormalizeRoomCode(code);
 
-            if (!room.getCreatorId().equals(telegramId)) {
-                throw new ForbiddenException("Только создатель комнаты может изменять настройки");
-            }
+        // Pessimistic lock on the room row
+        RoomEntity room = roomJpaRepository.findByCodeForUpdate(normalizedCode)
+                .filter(r -> r.getStatus() != RoomStatus.ARCHIVED)
+                .orElseThrow(RoomNotFoundException::new);
 
-            if (maxPlayers < 4 || maxPlayers > 12) {
-                throw new InvalidRoomSettingsException("Максимальное число игроков должно быть от 4 до 12");
-            }
-
-            if (maxPlayers < room.getPlayers().size()) {
-                throw new InvalidRoomSettingsException(HttpStatus.CONFLICT, "INVALID_MAX_PLAYERS",
-                        "Максимальное число игроков не может быть меньше текущего количества участников (" + room.getPlayers().size() + ")");
-            }
-
-            room.setMaxPlayers(maxPlayers);
-            room.setLastActivityAt(Instant.now());
-
-            RoomResponse response = RoomResponse.from(room);
-            broadcaster.broadcastToRoom(room.getCode(), WsEvent.of("room:settings_updated",
-                    new SettingsUpdatedData(maxPlayers, room.isReadyToStart(), response)));
-
-            log.info("Room settings updated: code={}, newMaxPlayers={}", room.getCode(), maxPlayers);
-            return response;
+        if (room.getStatus() != RoomStatus.LOBBY) {
+            throw new RoomAlreadyStartedException("Настройки комнаты можно изменять только в режиме LOBBY");
         }
+
+        if (!room.getCreatorTelegramId().equals(telegramId)) {
+            throw new ForbiddenException("Только создатель комнаты может изменять настройки");
+        }
+
+        // Validate maxPlayers against 4..12 and current players count
+        InputValidator.validateMaxPlayers(maxPlayers, room.getParticipants().size());
+
+        room.setMaxPlayers(maxPlayers);
+        Instant now = Instant.now();
+        room.setUpdatedAt(now);
+        room.setLastActivityAt(now);
+        roomJpaRepository.save(room);
+
+        Room domainRoom = RoomMapper.toDomain(room, botUsername);
+        RoomResponse response = RoomResponse.from(domainRoom);
+
+        broadcastAfterCommit(() -> broadcaster.broadcastToRoom(room.getCode(),
+                WsEvent.of("room:settings_updated",
+                        new SettingsUpdatedData(maxPlayers, domainRoom.isReadyToStart(), response))));
+
+        log.info("Room settings updated: code={}, newMaxPlayers={}", room.getCode(), maxPlayers);
+        return response;
     }
 
+    @Transactional
     public void updatePlayerConnectionStatus(String code, String telegramId, ConnectionStatus status) {
-        Optional<Room> roomOpt = roomRepository.findByCode(code);
+        String normalizedCode = InputValidator.validateAndNormalizeRoomCode(code);
+        Optional<RoomEntity> roomOpt = roomJpaRepository.findByCodeWithParticipants(normalizedCode);
         if (roomOpt.isEmpty()) return;
 
-        Room room = roomOpt.get();
-        synchronized (room) {
-            room.getPlayers().stream()
-                    .filter(p -> p.getTelegramId().equals(telegramId))
-                    .findFirst()
-                    .ifPresent(p -> {
-                        p.setConnectionStatus(status);
-                        p.setDisconnectedAt(status == ConnectionStatus.DISCONNECTED ? Instant.now() : null);
-                        room.setLastActivityAt(Instant.now());
+        RoomEntity room = roomOpt.get();
+        room.getParticipants().stream()
+                .filter(p -> p.getTelegramId().equals(telegramId))
+                .findFirst()
+                .ifPresent(p -> {
+                    if (p.getConnectionStatus() == status) {
+                        return;
+                    }
+                    p.setConnectionStatus(status);
+                    p.setDisconnectedAt(status == ConnectionStatus.DISCONNECTED ? Instant.now() : null);
+                    room.setLastActivityAt(Instant.now());
+                    roomJpaRepository.save(room);
 
-                        broadcaster.broadcastToRoom(room.getCode(), WsEvent.of("room:player_connection_changed",
-                                new PlayerConnectionChangedData(telegramId, status)));
-                    });
-        }
+                    broadcastAfterCommit(() -> broadcaster.broadcastToRoom(room.getCode(),
+                            WsEvent.of("room:player_connection_changed",
+                                    new PlayerConnectionChangedData(telegramId, status))));
+                });
     }
 
     @Scheduled(fixedRate = 60000)
+    @Transactional
     public void cleanupInactiveRooms() {
         Instant now = Instant.now();
-        List<Room> allRooms = roomRepository.findAll();
-        for (Room room : allRooms) {
-            if (room.getStatus() == RoomStatus.LOBBY) {
-                boolean allDisconnectedOrEmpty = room.getPlayers().isEmpty() ||
-                        room.getPlayers().stream().allMatch(p -> p.getConnectionStatus() == ConnectionStatus.DISCONNECTED);
+        Instant threshold = now.minus(INACTIVITY_TIMEOUT);
+        List<RoomEntity> inactiveRooms = roomJpaRepository.findInactiveLobbies(threshold);
 
-                if (allDisconnectedOrEmpty && room.getLastActivityAt().plus(INACTIVITY_TIMEOUT).isBefore(now)) {
-                    roomRepository.delete(room.getCode());
-                    log.info("Inactive room archived/deleted: code={}", room.getCode());
-                }
+        for (RoomEntity room : inactiveRooms) {
+            boolean allDisconnectedOrEmpty = room.getParticipants().isEmpty() ||
+                    room.getParticipants().stream().allMatch(p -> p.getConnectionStatus() == ConnectionStatus.DISCONNECTED);
+
+            if (allDisconnectedOrEmpty) {
+                roomJpaRepository.delete(room);
+                log.info("Inactive room deleted: code={}", room.getCode());
             }
         }
     }
 
-    private Room findRoomOrThrow(String code) {
-        return roomRepository.findByCode(code)
+    private RoomEntity findRoomOrThrow(String normalizedCode) {
+        return roomJpaRepository.findByCodeWithParticipants(normalizedCode)
                 .filter(r -> r.getStatus() != RoomStatus.ARCHIVED)
                 .orElseThrow(RoomNotFoundException::new);
     }
@@ -321,10 +376,27 @@ public class RoomService {
                 sb.append(CODE_ALPHABET.charAt(random.nextInt(CODE_ALPHABET.length())));
             }
             String code = sb.toString();
-            if (!roomRepository.existsByCode(code)) {
+            if (!roomJpaRepository.existsByCode(code)) {
                 return code;
             }
         }
         return UUID.randomUUID().toString().substring(0, 6).toUpperCase(Locale.ROOT);
+    }
+
+    private void broadcastAfterCommit(Runnable broadcastAction) {
+        if (TransactionSynchronizationManager.isActualTransactionActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    try {
+                        broadcastAction.run();
+                    } catch (Exception e) {
+                        log.error("Failed to broadcast WebSocket event after commit", e);
+                    }
+                }
+            });
+        } else {
+            broadcastAction.run();
+        }
     }
 }

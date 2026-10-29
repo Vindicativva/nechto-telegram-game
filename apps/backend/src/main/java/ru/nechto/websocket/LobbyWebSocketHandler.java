@@ -103,33 +103,24 @@ public class LobbyWebSocketHandler extends TextWebSocketHandler {
 
             broadcaster.registerSession(normalizedCode, telegramId, session);
 
-            synchronized (room) {
-                Optional<RoomParticipant> participantOpt = room.getPlayers().stream()
-                        .filter(p -> telegramId.equals(p.getTelegramId()))
-                        .findFirst();
+            Optional<RoomParticipant> participantOpt = room.getPlayers().stream()
+                    .filter(p -> telegramId.equals(p.getTelegramId()))
+                    .findFirst();
 
-                boolean wasDisconnected = false;
-                if (participantOpt.isPresent()) {
-                    wasDisconnected = participantOpt.get().getConnectionStatus() == ConnectionStatus.DISCONNECTED;
-                    participantOpt.get().setConnectionStatus(ConnectionStatus.ONLINE);
-                    participantOpt.get().setDisconnectedAt(null);
-                } else {
-                    // Try to auto-join if room is in LOBBY and not full
-                    try {
-                        TelegramUser user = TelegramUser.of(telegramId, username, displayName);
-                        roomService.joinRoom(normalizedCode, user);
-                    } catch (Exception e) {
-                        log.debug("Auto-join failed for user {} in room {}: {}", telegramId, normalizedCode, e.getMessage());
-                    }
-                }
-
-                RoomResponse response = roomService.getRoomByCode(normalizedCode);
-                broadcaster.sendToSession(session, WsEvent.of("room:state_sync", response));
-
-                if (wasDisconnected) {
-                    roomService.updatePlayerConnectionStatus(normalizedCode, telegramId, ConnectionStatus.ONLINE);
+            if (participantOpt.isPresent()) {
+                roomService.updatePlayerConnectionStatus(normalizedCode, telegramId, ConnectionStatus.ONLINE);
+            } else {
+                // Try to auto-join if room is in LOBBY and not full
+                try {
+                    TelegramUser user = TelegramUser.of(telegramId, username, displayName);
+                    roomService.joinRoom(normalizedCode, user);
+                } catch (Exception e) {
+                    log.debug("Auto-join failed for user {} in room {}: {}", telegramId, normalizedCode, e.getMessage());
                 }
             }
+
+            RoomResponse response = roomService.getRoomByCode(normalizedCode);
+            broadcaster.sendToSession(session, WsEvent.of("room:state_sync", response));
         } catch (Exception e) {
             log.error("Error during WebSocket subscription for session {}", session.getId(), e);
         }

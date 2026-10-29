@@ -9,12 +9,12 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
-import ru.nechto.model.Room;
-import ru.nechto.model.RoomStatus;
-import ru.nechto.model.TelegramUser;
-import ru.nechto.repository.RoomRepository;
 import ru.nechto.dto.request.CreateRoomRequest;
 import ru.nechto.dto.response.RoomResponse;
+import ru.nechto.entity.RoomEntity;
+import ru.nechto.model.RoomStatus;
+import ru.nechto.model.TelegramUser;
+import ru.nechto.repository.jpa.RoomJpaRepository;
 import ru.nechto.service.RoomService;
 
 import static org.hamcrest.Matchers.*;
@@ -31,7 +31,7 @@ class RoomControllerTest {
     private WebApplicationContext webApplicationContext;
 
     @Autowired
-    private RoomRepository roomRepository;
+    private RoomJpaRepository roomJpaRepository;
 
     @Autowired
     private RoomService roomService;
@@ -41,7 +41,7 @@ class RoomControllerTest {
     @BeforeEach
     void setUp() {
         mockMvc = MockMvcBuilders.webAppContextSetup(webApplicationContext).build();
-        roomRepository.findAll().forEach(r -> roomRepository.delete(r.getCode()));
+        roomJpaRepository.deleteAll();
     }
 
     @Test
@@ -94,7 +94,7 @@ class RoomControllerTest {
                         .header("X-Telegram-Id", "123456789")
                         .content(requestJsonTooFew))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.error.code").value("BAD_REQUEST"));
+                .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
 
         String requestJsonTooMany = """
                 {
@@ -108,7 +108,7 @@ class RoomControllerTest {
                         .header("X-Telegram-Id", "123456789")
                         .content(requestJsonTooMany))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.error.code").value("BAD_REQUEST"));
+                .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
     }
 
     @Test
@@ -126,7 +126,7 @@ class RoomControllerTest {
                         .header("X-Telegram-Id", "123456789")
                         .content(requestJsonEmpty))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.error.code").value("BAD_REQUEST"));
+                .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
 
         String requestJsonTooLong = String.format("""
                 {
@@ -140,7 +140,7 @@ class RoomControllerTest {
                         .header("X-Telegram-Id", "123456789")
                         .content(requestJsonTooLong))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.error.code").value("BAD_REQUEST"));
+                .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
     }
 
     @Test
@@ -302,8 +302,9 @@ class RoomControllerTest {
                 new CreateRoomRequest("Тест", 6)
         );
 
-        Room raw = roomRepository.findByCode(created.code()).orElseThrow();
+        RoomEntity raw = roomJpaRepository.findByCode(created.code()).orElseThrow();
         raw.setStatus(RoomStatus.IN_PROGRESS);
+        roomJpaRepository.save(raw);
 
         String joinBody = """
                 {

@@ -15,7 +15,7 @@ import tools.jackson.databind.ObjectMapper;
 import ru.nechto.dto.request.CreateRoomRequest;
 import ru.nechto.dto.response.RoomResponse;
 import ru.nechto.model.TelegramUser;
-import ru.nechto.repository.RoomRepository;
+import ru.nechto.repository.jpa.RoomJpaRepository;
 import ru.nechto.service.RoomService;
 
 import java.util.concurrent.BlockingQueue;
@@ -34,14 +34,14 @@ class RoomWebSocketIntegrationTest {
     private RoomService roomService;
 
     @Autowired
-    private RoomRepository roomRepository;
+    private RoomJpaRepository roomJpaRepository;
 
     @Autowired
     private ObjectMapper objectMapper;
 
     @BeforeEach
     void setUp() {
-        roomRepository.findAll().forEach(r -> roomRepository.delete(r.getCode()));
+        roomJpaRepository.deleteAll();
     }
 
     @Test

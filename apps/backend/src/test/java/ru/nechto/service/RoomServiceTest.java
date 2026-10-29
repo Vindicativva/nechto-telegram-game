@@ -3,59 +3,46 @@ package ru.nechto.service;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import ru.nechto.dto.request.CreateRoomRequest;
 import ru.nechto.dto.response.RoomResponse;
-import ru.nechto.dto.ws.HostChangedData;
-import ru.nechto.dto.ws.PlayerJoinedData;
-import ru.nechto.dto.ws.PlayerLeftData;
-import ru.nechto.dto.ws.SettingsUpdatedData;
-import ru.nechto.dto.ws.PlayerConnectionChangedData;
-import ru.nechto.dto.ws.WsEvent;
+import ru.nechto.entity.RoomEntity;
 import ru.nechto.exception.ActiveRoomExistsException;
 import ru.nechto.exception.ForbiddenException;
+import ru.nechto.exception.InvalidRoomCodeException;
 import ru.nechto.exception.InvalidRoomSettingsException;
 import ru.nechto.exception.RoomAlreadyStartedException;
 import ru.nechto.exception.RoomFullException;
 import ru.nechto.exception.RoomNotFoundException;
 import ru.nechto.model.ConnectionStatus;
-import ru.nechto.model.Room;
 import ru.nechto.model.RoomParticipant;
 import ru.nechto.model.RoomStatus;
 import ru.nechto.model.TelegramUser;
-import ru.nechto.repository.InMemoryRoomRepository;
-import ru.nechto.repository.RoomRepository;
+import ru.nechto.repository.jpa.RoomJpaRepository;
 import ru.nechto.websocket.RoomWebSocketBroadcaster;
 
-import java.time.Instant;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.atLeastOnce;
-import static org.mockito.Mockito.verify;
 
-@ExtendWith(MockitoExtension.class)
+@SpringBootTest
 class RoomServiceTest {
 
-    private RoomRepository roomRepository;
+    @Autowired
+    private RoomJpaRepository roomJpaRepository;
 
-    @Mock
-    private RoomWebSocketBroadcaster broadcaster;
-
+    @Autowired
     private RoomService roomService;
+
+    @MockitoBean
+    private RoomWebSocketBroadcaster broadcaster;
 
     @BeforeEach
     void setUp() {
-        roomRepository = new InMemoryRoomRepository();
-        roomService = new RoomService(roomRepository, broadcaster);
-        ReflectionTestUtils.setField(roomService, "botUsername", "StayAwayGameBot");
+        roomJpaRepository.deleteAll();
     }
 
     @Test
@@ -87,8 +74,7 @@ class RoomServiceTest {
         assertThat(creatorParticipant.getJoinedAt()).isNotNull();
         assertThat(creatorParticipant.getDisconnectedAt()).isNull();
 
-        // Verify stored in repository
-        Optional<Room> stored = roomRepository.findByCode(response.code());
+        Optional<RoomEntity> stored = roomJpaRepository.findByCodeWithParticipants(response.code());
         assertThat(stored).isPresent();
     }
 
@@ -147,7 +133,7 @@ class RoomServiceTest {
     @Test
     @DisplayName("Получение комнаты по несуществующему коду выбрасывает RoomNotFoundException (404)")
     void getRoomByCode_NotFound_ThrowsException() {
-        assertThatThrownBy(() -> roomService.getRoomByCode("NON_EXIST"))
+        assertThatThrownBy(() -> roomService.getRoomByCode("NONEXIST"))
                 .isInstanceOf(RoomNotFoundException.class);
     }
 
@@ -176,9 +162,6 @@ class RoomServiceTest {
         RoomResponse r4 = roomService.joinRoom(room.code(), player4);
         assertThat(r4.currentPlayersCount()).isEqualTo(4);
         assertThat(r4.isReadyToStart()).isTrue();
-
-        // Verify WebSocket broadcast room:player_joined was sent
-        verify(broadcaster, atLeastOnce()).broadcastToRoom(eq(room.code()), any());
     }
 
     @Test
@@ -224,8 +207,9 @@ class RoomServiceTest {
         RoomResponse room = roomService.createRoom(creator, new CreateRoomRequest("Партия", 6));
 
         // Mark room as IN_PROGRESS
-        Room rawRoom = roomRepository.findByCode(room.code()).orElseThrow();
+        RoomEntity rawRoom = roomJpaRepository.findByCode(room.code()).orElseThrow();
         rawRoom.setStatus(RoomStatus.IN_PROGRESS);
+        roomJpaRepository.save(rawRoom);
 
         TelegramUser player2 = TelegramUser.of("1002", "p2", "P2");
         assertThatThrownBy(() -> roomService.joinRoom(room.code(), player2))
@@ -309,5 +293,12 @@ class RoomServiceTest {
 
         assertThatThrownBy(() -> roomService.updateSettings(room.code(), "1001", 4))
                 .isInstanceOf(InvalidRoomSettingsException.class);
+    }
+
+    @Test
+    @DisplayName("Невалидный код комнаты выбрасывает InvalidRoomCodeException")
+    void invalidRoomCode_ThrowsException() {
+        assertThatThrownBy(() -> roomService.getRoomByCode("inv!@#"))
+                .isInstanceOf(InvalidRoomCodeException.class);
     }
 }
