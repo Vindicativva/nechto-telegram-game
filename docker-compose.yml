@@ -1,0 +1,51 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: nechto-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-nechto_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nechto_secret_password}
+      POSTGRES_DB: ${POSTGRES_DB:-nechto_db}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nechto_user} -d ${POSTGRES_DB:-nechto_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - nechto-network
+
+  backend:
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile
+    container_name: nechto-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-nechto_db}
+      DB_USER: ${POSTGRES_USER:-nechto_user}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-nechto_secret_password}
+      SERVER_PORT: ${SERVER_PORT:-8080}
+      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-StayAwayGameBot}
+    ports:
+      - "${SERVER_PORT:-8080}:${SERVER_PORT:-8080}"
+    networks:
+      - nechto-network
+
+volumes:
+  pgdata:
+    driver: local
+
+networks:
+  nechto-network:
+    driver: bridge
