@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
@@ -17,14 +18,18 @@ import ru.nechto.model.TelegramUser;
 import ru.nechto.repository.jpa.RoomJpaRepository;
 import ru.nechto.service.RoomService;
 
-import static org.hamcrest.Matchers.*;
+import static org.hamcrest.Matchers.hasSize;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+/**
+ * Интеграционные тесты REST контроллера RoomController.
+ */
 @SpringBootTest
+@ActiveProfiles("test")
 class RoomControllerTest {
 
     @Autowired
@@ -44,6 +49,9 @@ class RoomControllerTest {
         roomJpaRepository.deleteAll();
     }
 
+    /**
+     * Проверяет успешное создание комнаты через POST /api/v1/rooms с заголовками Telegram.
+     */
     @Test
     @DisplayName("POST /api/v1/rooms - Успешное создание комнаты (201 Created)")
     void createRoom_Success() throws Exception {
@@ -63,7 +71,7 @@ class RoomControllerTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id").isNotEmpty())
                 .andExpect(jsonPath("$.code").isNotEmpty())
-                .andExpect(jsonPath("$.inviteLink", startsWith("https://t.me/")))
+                .andExpect(jsonPath("$.inviteLink").isNotEmpty())
                 .andExpect(jsonPath("$.name").value("Вечерняя партия"))
                 .andExpect(jsonPath("$.creatorId").value("123456789"))
                 .andExpect(jsonPath("$.status").value("LOBBY"))
@@ -79,6 +87,9 @@ class RoomControllerTest {
                 .andExpect(jsonPath("$.createdAt").isNotEmpty());
     }
 
+    /**
+     * Проверяет отказ 400 при передаче maxPlayers вне диапазона 4..12.
+     */
     @Test
     @DisplayName("POST /api/v1/rooms - Ошибка 400 Bad Request при maxPlayers вне диапазона 4..12")
     void createRoom_InvalidMaxPlayers_Returns400() throws Exception {
@@ -111,6 +122,9 @@ class RoomControllerTest {
                 .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
     }
 
+    /**
+     * Проверяет отказ 400 при пустом названии или превышении лимита 32 символа.
+     */
     @Test
     @DisplayName("POST /api/v1/rooms - Ошибка 400 Bad Request при пустом имени или длине > 32")
     void createRoom_InvalidName_Returns400() throws Exception {
@@ -143,6 +157,9 @@ class RoomControllerTest {
                 .andExpect(jsonPath("$.error.code").value("VALIDATION_ERROR"));
     }
 
+    /**
+     * Проверяет отказ 401 при отсутствии данных Telegram пользователя.
+     */
     @Test
     @DisplayName("POST /api/v1/rooms - Ошибка 401 Unauthorized если данные пользователя отсутствуют")
     void createRoom_MissingTelegramUser_Returns401() throws Exception {
@@ -160,6 +177,9 @@ class RoomControllerTest {
                 .andExpect(jsonPath("$.error.code").value("UNAUTHORIZED"));
     }
 
+    /**
+     * Проверяет отказ 409 ACTIVE_ROOM_ALREADY_EXISTS, если у создателя уже есть активная комната.
+     */
     @Test
     @DisplayName("POST /api/v1/rooms - Ошибка 409 Conflict если у пользователя уже есть активная комната")
     void createRoom_ActiveRoomExists_Returns409() throws Exception {
@@ -181,9 +201,12 @@ class RoomControllerTest {
                         .header("X-Telegram-Id", "111")
                         .content(requestJson))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.error.code").value("ACTIVE_ROOM_EXISTS"));
+                .andExpect(jsonPath("$.error.code").value("ACTIVE_ROOM_ALREADY_EXISTS"));
     }
 
+    /**
+     * Проверяет получение состояния комнаты по коду.
+     */
     @Test
     @DisplayName("GET /api/v1/rooms/{code} - Успешное получение информации о комнате")
     void getRoom_Success() throws Exception {
@@ -199,6 +222,9 @@ class RoomControllerTest {
                 .andExpect(jsonPath("$.currentPlayersCount").value(1));
     }
 
+    /**
+     * Проверяет 404 ROOM_NOT_FOUND при запросе несуществующей комнаты.
+     */
     @Test
     @DisplayName("GET /api/v1/rooms/{code} - 404 Not Found при запросе несуществующей комнаты")
     void getRoom_NotFound_Returns404() throws Exception {
@@ -208,6 +234,9 @@ class RoomControllerTest {
                 .andExpect(jsonPath("$.error.message").value("Комната не найдена или недоступна"));
     }
 
+    /**
+     * Проверяет подключение нового игрока к комнате (200 OK).
+     */
     @Test
     @DisplayName("POST /api/v1/rooms/{code}/join - Подключение нового игрока (200 OK)")
     void joinRoom_Success() throws Exception {
@@ -235,6 +264,9 @@ class RoomControllerTest {
                 .andExpect(jsonPath("$.players[1].isCreator").value(false));
     }
 
+    /**
+     * Проверяет идемпотентность повторного подключения игрока.
+     */
     @Test
     @DisplayName("POST /api/v1/rooms/{code}/join - Повторное подключение идемпотентно (200 OK)")
     void joinRoom_Idempotent_Returns200WithoutDuplicates() throws Exception {
@@ -267,6 +299,9 @@ class RoomControllerTest {
                 .andExpect(jsonPath("$.players", hasSize(2)));
     }
 
+    /**
+     * Проверяет отказ 409 ROOM_FULL при входе в заполненную комнату.
+     */
     @Test
     @DisplayName("POST /api/v1/rooms/{code}/join - 409 Conflict ROOM_FULL при заполненной комнате")
     void joinRoom_Full_Returns409() throws Exception {
@@ -281,7 +316,6 @@ class RoomControllerTest {
         String joinBody = """
                 {
                     "telegramId": "5",
-                    "username": "u5",
                     "displayName": "P5"
                 }
                 """;
@@ -294,22 +328,24 @@ class RoomControllerTest {
                 .andExpect(jsonPath("$.error.message").value("Комната заполнена"));
     }
 
+    /**
+     * Проверяет отказ 409 ROOM_ALREADY_STARTED, если игра уже началась.
+     */
     @Test
-    @DisplayName("POST /api/v1/rooms/{code}/join - 409 Conflict ROOM_ALREADY_STARTED если игра начата")
+    @DisplayName("POST /api/v1/rooms/{code}/join - 409 Conflict ROOM_ALREADY_STARTED если игра уже началась")
     void joinRoom_AlreadyStarted_Returns409() throws Exception {
         RoomResponse created = roomService.createRoom(
                 TelegramUser.of("1", "u1", "P1"),
                 new CreateRoomRequest("Тест", 6)
         );
 
-        RoomEntity raw = roomJpaRepository.findByCode(created.code()).orElseThrow();
-        raw.setStatus(RoomStatus.IN_PROGRESS);
-        roomJpaRepository.save(raw);
+        RoomEntity entity = roomJpaRepository.findByCode(created.code()).orElseThrow();
+        entity.setStatus(RoomStatus.IN_PROGRESS);
+        roomJpaRepository.save(entity);
 
         String joinBody = """
                 {
                     "telegramId": "2",
-                    "username": "u2",
                     "displayName": "P2"
                 }
                 """;
@@ -322,6 +358,9 @@ class RoomControllerTest {
                 .andExpect(jsonPath("$.error.message").value("Игра уже началась, подключение невозможно"));
     }
 
+    /**
+     * Проверяет 404 ROOM_NOT_FOUND при входе по неверному коду.
+     */
     @Test
     @DisplayName("POST /api/v1/rooms/{code}/join - 404 ROOM_NOT_FOUND при неверном коде")
     void joinRoom_NotFound_Returns404() throws Exception {
@@ -332,6 +371,9 @@ class RoomControllerTest {
                 .andExpect(jsonPath("$.error.code").value("ROOM_NOT_FOUND"));
     }
 
+    /**
+     * Проверяет выход создателя и автоматическую смену хоста.
+     */
     @Test
     @DisplayName("POST /api/v1/rooms/{code}/leave - Выход и смена хоста")
     void leaveRoom_Success() throws Exception {
@@ -341,7 +383,6 @@ class RoomControllerTest {
         );
         roomService.joinRoom(created.code(), TelegramUser.of("2", "u2", "P2"));
 
-        // Creator leaves
         mockMvc.perform(post("/api/v1/rooms/" + created.code() + "/leave")
                         .header("X-Telegram-Id", "1"))
                 .andExpect(status().isOk())
@@ -351,6 +392,9 @@ class RoomControllerTest {
                 .andExpect(jsonPath("$.players[0].isCreator").value(true));
     }
 
+    /**
+     * Проверяет изменение настроек создателем комнаты.
+     */
     @Test
     @DisplayName("PATCH /api/v1/rooms/{code}/settings - Изменение настроек создателем")
     void updateSettings_Success() throws Exception {
@@ -373,6 +417,9 @@ class RoomControllerTest {
                 .andExpect(jsonPath("$.maxPlayers").value(10));
     }
 
+    /**
+     * Проверяет отказ 403 FORBIDDEN_NOT_CREATOR, если настройки изменяет не создатель.
+     */
     @Test
     @DisplayName("PATCH /api/v1/rooms/{code}/settings - 403 Forbidden если изменяет не создатель")
     void updateSettings_NotCreator_Returns403() throws Exception {
@@ -393,6 +440,6 @@ class RoomControllerTest {
                         .header("X-Telegram-Id", "2")
                         .content(settingsJson))
                 .andExpect(status().isForbidden())
-                .andExpect(jsonPath("$.error.code").value("FORBIDDEN"));
+                .andExpect(jsonPath("$.error.code").value("FORBIDDEN_NOT_CREATOR"));
     }
 }

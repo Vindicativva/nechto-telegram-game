@@ -7,6 +7,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import ru.nechto.dto.request.CreateRoomRequest;
 import ru.nechto.dto.response.ErrorResponse;
@@ -21,6 +23,7 @@ import ru.nechto.model.RoomStatus;
 import ru.nechto.model.TelegramUser;
 import ru.nechto.repository.jpa.RoomJpaRepository;
 import ru.nechto.repository.jpa.RoomParticipantJpaRepository;
+import ru.nechto.service.RoomCodeGenerator;
 import ru.nechto.service.RoomService;
 import ru.nechto.websocket.RoomWebSocketBroadcaster;
 
@@ -32,7 +35,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -42,7 +44,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+/**
+ * Интеграционные тесты слоя базы данных, миграций, транзакций и безопасности.
+ */
 @SpringBootTest
+@ActiveProfiles("test")
 class RoomDatabaseIntegrationTest {
 
     @Autowired
@@ -65,13 +71,28 @@ class RoomDatabaseIntegrationTest {
 
     @BeforeEach
     void setUp() {
+        roomParticipantJpaRepository.deleteAll();
         roomJpaRepository.deleteAll();
     }
 
+    /**
+     * Проверяет сохранность данных в БД при пересоздании экземпляра сервиса (имитация перезапуска приложения).
+     *
+     * <p><b>Предусловия (Given):</b> Создана комната с кодом {@code created.code()} и добавлены два участника.</p>
+     *
+     * <p><b>Действие (When):</b> Создается новый экземпляр {@code RoomService} с подключением к той же БД,
+     * после чего вызывается метод {@code getRoomByCode}.</p>
+     *
+     * <p><b>Ожидаемый результат (Then):</b>
+     * <ul>
+     *   <li>Комната и все параметры лобби успешно загружаются из БД.</li>
+     *   <li>Список участников содержит сохраненных игроков.</li>
+     * </ul>
+     * </p>
+     */
     @Test
     @DisplayName("1. Тест персистентности: данные комнаты и участников сохраняются в БД при пересоздании сервиса")
     void testPersistenceAcrossServiceInstances() {
-        // Создаем комнату и добавляем игроков
         TelegramUser creator = TelegramUser.of("1001", "creator", "Creator Player");
         RoomResponse created = roomService.createRoom(creator, new CreateRoomRequest("Партия сохранения", 6));
 
@@ -79,9 +100,9 @@ class RoomDatabaseIntegrationTest {
         roomService.joinRoom(created.code(), p2);
 
         // Имитируем перезапуск приложения: создаем новый экземпляр RoomService с тем же репозиторием
-        RoomService newServiceInstance = new RoomService(roomJpaRepository, broadcaster);
+        RoomCodeGenerator codeGen = new RoomCodeGenerator(roomJpaRepository, "StayAwayGameBot");
+        RoomService newServiceInstance = new RoomService(roomJpaRepository, broadcaster, codeGen);
 
-        // Запрашиваем состояние комнаты через новый экземпляр
         RoomResponse reloaded = newServiceInstance.getRoomByCode(created.code());
 
         assertThat(reloaded).isNotNull();
@@ -93,6 +114,22 @@ class RoomDatabaseIntegrationTest {
         assertThat(reloaded.players()).extracting("telegramId").containsExactly("1001", "1002");
     }
 
+    /**
+     * Проверяет корректное применение миграций Flyway на чистую базу данных:
+     * существование таблиц, первичных и внешних ключей.
+     *
+     * <p><b>Предусловия (Given):</b> Flyway миграции применились на чистую схему БД.</p>
+     *
+     * <p><b>Действие (When):</b> Извлекаются метаданные JDBC соединения {@code connection.getMetaData()}.</p>
+     *
+     * <p><b>Ожидаемый результат (Then):</b>
+     * <ul>
+     *   <li>Таблицы {@code rooms}, {@code room_participants} и {@code flyway_schema_history} присутствуют в БД.</li>
+     *   <li>Таблица {@code rooms} имеет первичный ключ {@code id}.</li>
+     *   <li>Таблица {@code room_participants} имеет внешний ключ на {@code rooms(id)}.</li>
+     * </ul>
+     * </p>
+     */
     @Test
     @DisplayName("2. Тест чистых миграций: схемы таблиц, первичные ключи и ограничения созданы корректно")
     void testFlywayMigrationsOnCleanDatabase() throws Exception {
@@ -142,10 +179,24 @@ class RoomDatabaseIntegrationTest {
         }
     }
 
+    /**
+     * Проверяет защиту от Race Condition при одновременной попытке 5 параллельных потоков занять последнее место.
+     *
+     * <p><b>Предусловия (Given):</b> Комната на 4 игрока с 3 уже зарегистрированными участниками.</p>
+     *
+     * <p><b>Действие (When):</b> 5 потоков одновременно через {@code CountDownLatch} отправляют запрос на вход.</p>
+     *
+     * <p><b>Ожидаемый результат (Then):</b>
+     * <ul>
+     *   <li>Ровно 1 поток успешно занимает слот (200 OK).</li>
+     *   <li>Ровно 4 потока получают отказ {@code RoomFullException} (409 Conflict).</li>
+     *   <li>В базе данных находится ровно 4 участника.</li>
+     * </ul>
+     * </p>
+     */
     @Test
     @DisplayName("3. Тест на состояние гонки (Race Condition): ровно 1 из 5 одновременных запросов занимает последнее место")
     void testRaceConditionOnLastSlotConcurrentJoins() throws Exception {
-        // Создаем комнату с лимитом 4 игрока и заполняем до 3 игроков (остается 1 свободное место)
         TelegramUser creator = TelegramUser.of("100", "c", "Creator");
         RoomResponse room = roomService.createRoom(creator, new CreateRoomRequest("Гонка", 4));
 
@@ -154,7 +205,6 @@ class RoomDatabaseIntegrationTest {
 
         assertThat(roomService.getRoomByCode(room.code()).currentPlayersCount()).isEqualTo(3);
 
-        // 5 новых игроков одновременно пытаются занять последнее 4-е место
         int concurrentUsers = 5;
         ExecutorService executor = Executors.newFixedThreadPool(concurrentUsers);
         CountDownLatch startLatch = new CountDownLatch(1);
@@ -169,7 +219,7 @@ class RoomDatabaseIntegrationTest {
             final String name = "Racer " + i;
 
             Callable<Void> task = () -> {
-                startLatch.await(); // Все потоки стартуют строго одновременно
+                startLatch.await();
                 try {
                     roomService.joinRoom(room.code(), TelegramUser.of(telegramId, telegramId, name));
                     successCount.incrementAndGet();
@@ -183,7 +233,6 @@ class RoomDatabaseIntegrationTest {
             futures.add(executor.submit(task));
         }
 
-        // Запуск гонки
         startLatch.countDown();
         boolean completed = doneLatch.await(10, TimeUnit.SECONDS);
         assertThat(completed).isTrue();
@@ -193,15 +242,25 @@ class RoomDatabaseIntegrationTest {
         }
         executor.shutdown();
 
-        // Проверяем: ровно 1 успешный вход и 4 отказа по ROOM_FULL
         assertThat(successCount.get()).isEqualTo(1);
         assertThat(fullConflictCount.get()).isEqualTo(4);
 
-        // В БД ровно 4 записи (лимит не превышен)
         RoomEntity roomInDb = roomJpaRepository.findByCodeWithParticipants(room.code()).orElseThrow();
         assertThat(roomInDb.getParticipants()).hasSize(4);
     }
 
+    /**
+     * Проверяет атомарность транзакций: невалидные запросы (XSS, спецсимволы, некорректный лимит)
+     * не меняют состояние базы данных.
+     *
+     * <p><b>Предусловия (Given):</b> Комната с 1 создателем в БД.</p>
+     *
+     * <p><b>Действие (When):</b> Выполняются невалидные вызовы методов сервиса.</p>
+     *
+     * <p><b>Ожидаемый результат (Then):</b>
+     * Сервис выбрасывает исключения валидации, а число записей в БД остаётся неизменным.
+     * </p>
+     */
     @Test
     @DisplayName("4. Тест атомарности: невалидные запросы не изменяют состояние БД")
     void testAtomicityOnInvalidRequests() {
@@ -226,16 +285,25 @@ class RoomDatabaseIntegrationTest {
         assertThatThrownBy(() -> roomService.updateSettings(created.code(), "1001", 15))
                 .isInstanceOf(InvalidRoomSettingsException.class);
 
-        // Проверяем, что состояние комнаты в БД осталось нетронутым
         RoomEntity roomInDb = roomJpaRepository.findByCodeWithParticipants(created.code()).orElseThrow();
         assertThat(roomInDb.getParticipants()).hasSize(1);
         assertThat(roomInDb.getMaxPlayers()).isEqualTo(6);
     }
 
+    /**
+     * Проверяет маскирование системных ошибок базы данных: ответ 500 не содержит SQL-запросов и стектрейса.
+     *
+     * <p><b>Предусловия (Given):</b> Низкоуровневое исключение СУБД {@code DataIntegrityViolationException} с фрагментами SQL.</p>
+     *
+     * <p><b>Действие (When):</b> Исключение передается в глобальный обработчик ошибок.</p>
+     *
+     * <p><b>Ожидаемый результат (Then):</b>
+     * Ответ содержит статус 500 и обезличенное сообщение, без утечки SQL или стектрейса.
+     * </p>
+     */
     @Test
     @DisplayName("5. Тест маскирования внутренних ошибок: клиенту не утекают детали SQL, таблицы и стектрейсы")
     void testErrorMaskingOnDatabaseException() {
-        // Симулируем низкоуровневую ошибку СУБД (например, нарушение ограничения целостности)
         DataIntegrityViolationException dbException = new DataIntegrityViolationException(
                 "ERROR: insert or update on table \"room_participants\" violates foreign key constraint \"fk_participants_room\" " +
                         "Detail: Key (room_id)=(550e8400-e29b-41d4-a716-446655440000) is not present in table \"rooms\". " +
@@ -243,7 +311,8 @@ class RoomDatabaseIntegrationTest {
                         "SELECT * FROM rooms;"
         );
 
-        ResponseEntity<ErrorResponse> response = globalExceptionHandler.handleGenericException(dbException);
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/v1/rooms/TEST");
+        ResponseEntity<ErrorResponse> response = globalExceptionHandler.handleGenericException(dbException, request);
 
         assertThat(response.getStatusCode().value()).isEqualTo(500);
         assertThat(response.getBody()).isNotNull();

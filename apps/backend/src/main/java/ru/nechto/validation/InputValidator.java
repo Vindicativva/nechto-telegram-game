@@ -1,6 +1,6 @@
 package ru.nechto.validation;
 
-import org.springframework.http.HttpStatus;
+import ru.nechto.exception.InvalidMaxPlayersException;
 import ru.nechto.exception.InvalidPlayerNameException;
 import ru.nechto.exception.InvalidRoomCodeException;
 import ru.nechto.exception.InvalidRoomSettingsException;
@@ -31,15 +31,15 @@ public final class InputValidator {
         if (displayName == null || displayName.isBlank()) {
             throw new InvalidPlayerNameException("Имя игрока обязательно");
         }
+        if (CONTROL_CHARS_PATTERN.matcher(displayName).find()) {
+            throw new InvalidPlayerNameException("Имя игрока не должно содержать управляющие символы");
+        }
         String trimmed = displayName.trim();
         if (trimmed.length() < 1 || trimmed.length() > 64) {
             throw new InvalidPlayerNameException("Длина имени игрока должна составлять от 1 до 64 символов");
         }
         if (HTML_PATTERN.matcher(trimmed).find()) {
             throw new InvalidPlayerNameException("Имя игрока не должно содержать HTML-теги");
-        }
-        if (CONTROL_CHARS_PATTERN.matcher(trimmed).find()) {
-            throw new InvalidPlayerNameException("Имя игрока не должно содержать управляющие символы");
         }
         return trimmed;
     }
@@ -57,12 +57,10 @@ public final class InputValidator {
 
     public static void validateMaxPlayers(Integer maxPlayers, int currentPlayersCount) {
         if (maxPlayers == null || maxPlayers < 4 || maxPlayers > 12) {
-            throw new InvalidRoomSettingsException(HttpStatus.BAD_REQUEST, "INVALID_MAX_PLAYERS",
-                    "Количество игроков должно быть от 4 до 12");
+            throw new InvalidMaxPlayersException("Количество игроков должно быть от 4 до 12");
         }
         if (maxPlayers < currentPlayersCount) {
-            throw new InvalidRoomSettingsException(HttpStatus.BAD_REQUEST, "INVALID_MAX_PLAYERS",
-                    "Максимальное число игроков не может быть меньше текущего количества участников (" + currentPlayersCount + ")");
+            throw new InvalidMaxPlayersException("Максимальное число игроков не может быть меньше текущего количества участников (" + currentPlayersCount + ")");
         }
     }
 }

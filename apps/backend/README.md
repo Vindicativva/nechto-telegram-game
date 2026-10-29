@@ -1,166 +1,91 @@
-# Нечто — Backend
+# Нечто — Backend Service
 
-Серверная часть для Telegram Mini App «Нечто» на Java с использованием Spring Boot, Spring Data JPA, PostgreSQL, Flyway и Docker Compose.
+Серверная часть для Telegram Mini App «Нечто» на Java с использованием Spring Boot 4, Spring Data JPA, PostgreSQL 16, Flyway, OpenAPI (Swagger UI) и Docker Compose.
+
+---
 
 ## Технологический стек
 
-- Java 25
-- Spring Boot 4
-- Spring Data JPA (Hibernate 7)
-- PostgreSQL 16 (с поддержкой H2 для локального юнит/интеграционного тестирования)
-- Flyway (версионированные миграции схемы БД)
-- Spring Web (MVC)
-- Spring WebSocket (Raw WebSocket handler с thread-safe броадкастером)
-- Jakarta Validation & кастомные валидаторы (XSS/Control char filtering)
-- Docker & Docker Compose (Multi-stage build)
-- JUnit 5 / Spring Boot Test / MockMvc / AssertJ
+- **Java:** 25
+- **Spring Boot:** 4
+- **ORM / СУБД:** Spring Data JPA (Hibernate 7) + PostgreSQL 16
+- **Миграции БД:** Flyway (схема `V1__init_rooms_and_participants.sql`)
+- **WebSocket:** Spring WebSocket Handler с thread-safe броадкастером сессий
+- **API Документация:** SpringDoc OpenAPI 3.0 / Swagger UI
+- **Безопасность и валидация:** Jakarta Validation, санитизация XSS/HTML и управляющих символов
+- **Тестирование:** JUnit 5 (Unit, Integration, Concurrency, WebSocket), MockMvc, AssertJ, Mockito (167+ тестов)
+
+---
+
+## Документация API
+
+- **Интерактивный Swagger UI:** [http://localhost:8080/swagger-ui.html](http://localhost:8080/swagger-ui.html)
+- **Спецификация OpenAPI 3.0 JSON:** [http://localhost:8080/v3/api-docs](http://localhost:8080/v3/api-docs)
+- **Полное руководство для фронтенд-разработчика:** [../../docs/API.md](../../docs/API.md)
 
 ---
 
 ## Быстрый запуск через Docker Compose
 
-Вся инфраструктура (PostgreSQL + автоматические миграции Flyway + Spring Boot backend) поднимается из корня репозитория:
+Из корня репозитория:
 
 ```bash
-# Скопируйте шаблон переменных окружения (при необходимости отредактируйте)
+# 1. Создайте файл .env из примера
 cp .env.example .env
 
-# Соберите и запустите контейнеры
+# 2. Соберите и запустите сервисы
 docker compose up --build -d
 ```
 
-После старта:
+Сервисы:
 - HTTP API: `http://localhost:8080/api`
+- Swagger UI: `http://localhost:8080/swagger-ui.html`
 - WebSocket: `ws://localhost:8080/ws`
-- Healthcheck: `http://localhost:8080/api/health`
 - PostgreSQL: `localhost:5432`
-
-Остановка сервисов:
-```bash
-docker compose down
-# С очисткой данных БД:
-docker compose down -v
-```
 
 ---
 
-## Локальный запуск (без Docker)
+## Локальный запуск (Maven Wrapper)
 
-### Требования
-- JDK 25 или выше (например, Eclipse Adoptium Temurin 25+)
-- PostgreSQL 16+ (или запущенный контейнер `docker compose up db -d`)
-
-Перейдите в директорию `apps/backend`:
 ```bash
-cd apps/backend
-```
-
-### Запуск через Maven Wrapper
-
-**Windows (PowerShell):**
-```powershell
+# Windows
 .\mvnw.cmd spring-boot:run
-```
 
-**Linux / macOS:**
-```bash
+# Linux / macOS
 chmod +x mvnw
 ./mvnw spring-boot:run
 ```
 
-Сервер автоматически применит миграции Flyway из `src/main/resources/db/migration/` при запуске.
-
 ---
 
-## Переменные окружения
+## Автоматическое тестирование
 
-| Переменная | По умолчанию | Описание |
-| :--- | :--- | :--- |
-| `SERVER_PORT` | `8080` | Порт HTTP/WebSocket сервера |
-| `DB_HOST` | `localhost` | Хост базы данных PostgreSQL |
-| `DB_PORT` | `5432` | Порт PostgreSQL |
-| `DB_NAME` | `nechto_db` | Имя базы данных |
-| `DB_USER` | `nechto_user` | Пользователь БД |
-| `DB_PASSWORD` | `nechto_secret_password` | Пароль пользователя БД |
-| `DATABASE_URL` | *динамический* | Полная строка JDBC URL (опционально) |
-| `TELEGRAM_BOT_USERNAME` | `StayAwayGameBot` | Имя бота Telegram для формирования диплинков |
+Каждый тестовый метод в кодовой базе снабжен подробным JavaDoc с секциями **Given**, **When**, **Then**.
 
----
-
-## Архитектура хранения и схемы БД
-
-База данных версионируется с помощью Flyway (`V1__init_rooms_and_participants.sql`).
-
-### 1. Таблица `rooms`
-- `id` (UUID, PK) — внутренний уникальный идентификатор.
-- `code` (VARCHAR(12), UNIQUE, INDEX) — публичный короткий код комнаты (4–12 символов `[A-Z0-9]`).
-- `name` (VARCHAR(32), CHECK 1..32) — название комнаты.
-- `creator_telegram_id` (VARCHAR(64)) — Telegram ID текущего хоста.
-- `status` (VARCHAR(20)) — `LOBBY`, `IN_PROGRESS`, `FINISHED`, `ARCHIVED`.
-- `max_players` (SMALLINT, CHECK 4..12) — лимит участников.
-- `created_at`, `updated_at`, `last_activity_at` (TIMESTAMP WITH TIME ZONE).
-
-### 2. Таблица `room_participants`
-- `id` (UUID, PK) — идентификатор участника.
-- `room_id` (UUID, FK -> rooms.id ON DELETE CASCADE).
-- `telegram_id` (VARCHAR(64)) — Telegram ID игрока.
-- `username` (VARCHAR(64), NULL) — никнейм.
-- `display_name` (VARCHAR(64), CHECK 1..64) — отображаемое имя (санитизировано, без HTML/тегов).
-- `is_creator` (BOOLEAN) — признак хоста.
-- `connection_status` (VARCHAR(20)) — `ONLINE`, `DISCONNECTED`.
-- `joined_at`, `disconnected_at` (TIMESTAMP WITH TIME ZONE).
-- Ограничение целостности: `UNIQUE(room_id, telegram_id)`.
-
----
-
-## Защита от состояния гонки (Race Conditions)
-
-Подключение к комнате защищено транзакцией с пессимистической блокировкой строки комнаты:
-```sql
-SELECT * FROM rooms WHERE code = ? FOR UPDATE;
-```
-Параллельные запросы выстраиваются в очередь на уровне БД. При попытке превышения `max_players` транзакция откатывается и возвращает ошибку `409 Conflict` (`ROOM_FULL`).
-WebSocket-уведомление `room:player_joined` отправляется **строго после фиксации транзакции (`TransactionSynchronization.afterCommit`)**.
-
----
-
-## Валидация и безопасность
-
-1. **Код комнаты:** строго `^[A-Z0-9]{4,12}$`.
-2. **Имя игрока (`displayName`):** от 1 до 64 символов, запрещены HTML-теги (`<`, `>`), спецсимволы и управляющие символы.
-3. **Название комнаты (`name`):** от 1 до 32 символов.
-4. **Количество игроков (`maxPlayers`):** строго от 4 до 12.
-5. **Маскирование ошибок:**
-   - Ошибки валидации возвращаются в формате `400 Bad Request` с кодом `"VALIDATION_ERROR"` и списком деталей.
-   - Любые непредвиденные системные/SQL ошибки маскируются до безопасного `500 Internal Server Error` с кодом `"INTERNAL_SERVER_ERROR"`. Исходные SQL-запросы, имена таблиц и стектрейсы клиенту **не возвращаются**.
-
----
-
-## Тестирование и верификация
-
-Все тесты запускаются автономно (в памяти используется эмуляция PostgreSQL в H2):
-
+### Запуск всех тестов:
 ```bash
-# Запуск всех 40 тестов:
-.\mvnw.cmd test
+# Windows
+.\mvnw.cmd clean test
 
-# Запуск только интеграционных тестов БД:
-.\mvnw.cmd test -Dtest=RoomDatabaseIntegrationTest
+# Linux / macOS
+./mvnw clean test
 ```
 
-Набор тестов проверяет:
-1. **Персистентность:** сохранение состояния комнат и участников при перезапуске сервиса.
-2. **Чистые миграции:** применение миграций Flyway на пустую БД, валидность внешних и первичных ключей.
-3. **Race Condition:** одновременное подключение 5 потоков на последнее свободное место (ровно 1 успешный вход, 4 отказа `409 ROOM_FULL`).
-4. **Атомарность:** откат изменений при невалидных входных данных.
-5. **Маскирование ошибок:** отсутствие SQL/стектрейсов в ответах клиенту.
-6. **WebSocket-синхронизация:** корректная рассылка событий в реальном времени.
-
----
-
-## Сборка JAR-архива
-
-```bash
-.\mvnw.cmd clean package
-```
-Результат сборки: `target/nechto-backend-0.0.1-SNAPSHOT.jar`.
+### Структура тестов:
+1. **Модульные тесты (Unit Tests):**
+   - `RoomCodeGeneratorTest` — генерация безопасных кодов, коллизии, inviteLink.
+   - `RoomServiceCreateTest` — создание комнат, граничные значения, лимиты, роли.
+   - `RoomServiceGetTest` — регистронезависимый поиск, 404, невалидные коды.
+   - `RoomServiceJoinTest` — подключение, динамика флага готовности, идемпотентный reconnect, заполненные комнаты.
+   - `RoomServiceLeaveTest` — уменьшение счетчика, Host Migration (ранний joinedAt), удаление пустых комнат.
+   - `RoomServiceSettingsTest` — изменение maxPlayers, права создателя, проверки лимитов.
+   - `InputValidatorTest` — валидация кодов, имен игроков (XSS/контрольные символы), лимитов.
+2. **Интеграционные тесты REST API:**
+   - `RoomControllerIntegrationTest` — сквозной HTTP-жизненный цикл, единый формат ошибок (400, 401, 403, 404, 409, 500), маскирование SQL.
+   - `RoomControllerTest` — расширенные тесты контроллера.
+3. **Многопоточные тесты конкурентности (Concurrency Tests):**
+   - `RoomConcurrencyIntegrationTest` — гонка 10 потоков за 1 свободное место (ровно 1 успешный вход, 9 отказов 409), параллельные дублирующие запросы.
+4. **Интеграционные тесты слоя БД:**
+   - `RoomDatabaseIntegrationTest` — персистентность при перезапуске, Flyway-миграции, атомарность, безопасность.
+5. **WebSocket-тесты:**
+   - `RoomWebSocketIntegrationTest` — начальный `room:state_sync`, `room:player_joined`, `room:player_left`, `room:host_changed`, `room:settings_updated`, `room:player_connection_changed`.

@@ -51,14 +51,17 @@ public class RoomService {
 
     private final RoomJpaRepository roomJpaRepository;
     private final RoomWebSocketBroadcaster broadcaster;
-    private final SecureRandom random = new SecureRandom();
+    private final RoomCodeGenerator codeGenerator;
 
     @Value("${nechto.telegram.bot-username:StayAwayGameBot}")
     private String botUsername;
 
-    public RoomService(RoomJpaRepository roomJpaRepository, RoomWebSocketBroadcaster broadcaster) {
+    public RoomService(RoomJpaRepository roomJpaRepository,
+                       RoomWebSocketBroadcaster broadcaster,
+                       RoomCodeGenerator codeGenerator) {
         this.roomJpaRepository = roomJpaRepository;
         this.broadcaster = broadcaster;
+        this.codeGenerator = codeGenerator;
     }
 
     @Transactional
@@ -81,7 +84,7 @@ public class RoomService {
         int maxPlayers = request.getMaxPlayers() != null ? request.getMaxPlayers() : 8;
         InputValidator.validateMaxPlayers(maxPlayers, 1);
 
-        String code = generateUniqueRoomCode();
+        String code = codeGenerator.generateCode();
         Instant now = Instant.now();
 
         RoomEntity roomEntity = new RoomEntity(
@@ -367,20 +370,6 @@ public class RoomService {
         return roomJpaRepository.findByCodeWithParticipants(normalizedCode)
                 .filter(r -> r.getStatus() != RoomStatus.ARCHIVED)
                 .orElseThrow(RoomNotFoundException::new);
-    }
-
-    private String generateUniqueRoomCode() {
-        for (int i = 0; i < 1000; i++) {
-            StringBuilder sb = new StringBuilder(CODE_LENGTH);
-            for (int j = 0; j < CODE_LENGTH; j++) {
-                sb.append(CODE_ALPHABET.charAt(random.nextInt(CODE_ALPHABET.length())));
-            }
-            String code = sb.toString();
-            if (!roomJpaRepository.existsByCode(code)) {
-                return code;
-            }
-        }
-        return UUID.randomUUID().toString().substring(0, 6).toUpperCase(Locale.ROOT);
     }
 
     private void broadcastAfterCommit(Runnable broadcastAction) {

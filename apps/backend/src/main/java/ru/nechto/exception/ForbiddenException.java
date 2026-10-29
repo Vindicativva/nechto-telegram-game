@@ -4,10 +4,10 @@ import org.springframework.http.HttpStatus;
 
 public class ForbiddenException extends LobbyException {
     public ForbiddenException() {
-        super(HttpStatus.FORBIDDEN, "FORBIDDEN", "Действие доступно только создателю комнаты");
+        super(HttpStatus.FORBIDDEN, "FORBIDDEN_NOT_CREATOR", "Действие доступно только создателю комнаты");
     }
 
     public ForbiddenException(String message) {
-        super(HttpStatus.FORBIDDEN, "FORBIDDEN", message);
+        super(HttpStatus.FORBIDDEN, "FORBIDDEN_NOT_CREATOR", message);
     }
 }

@@ -2,18 +2,35 @@ package ru.nechto.model;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import io.swagger.v3.oas.annotations.media.Schema;
+
 import java.time.Instant;
 import java.util.Objects;
 
 @JsonInclude(JsonInclude.Include.NON_NULL)
+@Schema(description = "Информация об участнике игровой комнаты")
 public class RoomParticipant {
+
+    @Schema(description = "Уникальный ID пользователя в Telegram", example = "123456789")
     private String telegramId;
+
+    @Schema(description = "Username пользователя в Telegram (при наличии)", example = "ivan_ivanov")
     private String username;
+
+    @Schema(description = "Отображаемое имя игрока в партии", example = "Иван")
     private String displayName;
+
     @JsonProperty("isCreator")
+    @Schema(description = "Является ли данный игрок создателем (хостом) комнаты", example = "true")
     private boolean isCreator;
+
+    @Schema(description = "Статус подключения к серверу (ONLINE, DISCONNECTED)", example = "ONLINE")
     private ConnectionStatus connectionStatus;
+
+    @Schema(description = "Время подключения к комнате (определяет очередность передачи прав хоста)", example = "2026-10-29T12:00:00.000Z")
     private Instant joinedAt;
+
+    @Schema(description = "Время обрыва соединения (если отключен)", example = "2026-10-29T12:05:00.000Z")
     private Instant disconnectedAt;
 
     public RoomParticipant() {
@@ -54,12 +71,10 @@ public class RoomParticipant {
         this.displayName = displayName;
     }
 
-    @JsonProperty("isCreator")
     public boolean isCreator() {
         return isCreator;
     }
 
-    @JsonProperty("isCreator")
     public void setCreator(boolean creator) {
         isCreator = creator;
     }
@@ -98,6 +113,6 @@ public class RoomParticipant {
 
     @Override
     public int hashCode() {
-        return Objects.hashCode(telegramId);
+        return Objects.hash(telegramId);
     }
 }

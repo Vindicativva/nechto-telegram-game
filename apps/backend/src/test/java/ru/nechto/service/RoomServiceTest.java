@@ -5,12 +5,14 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import ru.nechto.dto.request.CreateRoomRequest;
 import ru.nechto.dto.response.RoomResponse;
 import ru.nechto.entity.RoomEntity;
 import ru.nechto.exception.ActiveRoomExistsException;
 import ru.nechto.exception.ForbiddenException;
+import ru.nechto.exception.InvalidMaxPlayersException;
 import ru.nechto.exception.InvalidRoomCodeException;
 import ru.nechto.exception.InvalidRoomSettingsException;
 import ru.nechto.exception.RoomAlreadyStartedException;
@@ -28,7 +30,11 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+/**
+ * Интеграционные тесты бизнес-логики управления комнатами (RoomService).
+ */
 @SpringBootTest
+@ActiveProfiles("test")
 class RoomServiceTest {
 
     @Autowired
@@ -45,6 +51,21 @@ class RoomServiceTest {
         roomJpaRepository.deleteAll();
     }
 
+    /**
+     * Проверяет успешное создание комнаты с сохранением всех атрибутов и назначением создателя хостом.
+     *
+     * <p><b>Предусловия (Given):</b> Корректные данные пользователя Telegram и параметры комнаты.</p>
+     *
+     * <p><b>Действие (When):</b> Вызывается {@code createRoom}.</p>
+     *
+     * <p><b>Ожидаемый результат (Then):</b>
+     * <ul>
+     *   <li>Комната создается с кодом из 6 символов.</li>
+     *   <li>Создатель добавлен с {@code isCreator=true} и статусом {@code ONLINE}.</li>
+     *   <li>Статус комнаты равен {@code LOBBY}, флаг {@code isReadyToStart=false}.</li>
+     * </ul>
+     * </p>
+     */
     @Test
     @DisplayName("Успешное создание комнаты с валидными параметрами")
     void createRoom_Success() {
@@ -78,6 +99,15 @@ class RoomServiceTest {
         assertThat(stored).isPresent();
     }
 
+    /**
+     * Проверяет отказ в создании второй активной комнаты одним и тем же пользователем.
+     *
+     * <p><b>Предусловия (Given):</b> Пользователь уже создал активную комнату в статусе LOBBY.</p>
+     *
+     * <p><b>Действие (When):</b> Тот же создатель пытается создать еще одну комнату.</p>
+     *
+     * <p><b>Ожидаемый результат (Then):</b> Выбрасывается {@code ActiveRoomExistsException}.</p>
+     */
     @Test
     @DisplayName("Ошибка при создании комнаты, если у создателя уже есть активная комната")
     void createRoom_WhenActiveRoomExists_ThrowsException() {
@@ -90,6 +120,15 @@ class RoomServiceTest {
                 .isInstanceOf(ActiveRoomExistsException.class);
     }
 
+    /**
+     * Проверяет отказ в создании комнаты при пустом названии или превышении лимита 32 символа.
+     *
+     * <p><b>Предусловия (Given):</b> Названия из пробелов или длиной 33 символа.</p>
+     *
+     * <p><b>Действие (When):</b> Вызывается {@code createRoom}.</p>
+     *
+     * <p><b>Ожидаемый результат (Then):</b> Выбрасывается {@code InvalidRoomSettingsException}.</p>
+     */
     @Test
     @DisplayName("Ошибка при создании комнаты с недопустимой длиной названия")
     void createRoom_InvalidName_ThrowsException() {
@@ -104,6 +143,15 @@ class RoomServiceTest {
                 .isInstanceOf(InvalidRoomSettingsException.class);
     }
 
+    /**
+     * Проверяет отказ в создании комнаты при недопустимом лимите maxPlayers (меньше 4 или больше 12).
+     *
+     * <p><b>Предусловия (Given):</b> Значения maxPlayers = 3 и maxPlayers = 13.</p>
+     *
+     * <p><b>Действие (When):</b> Вызывается {@code createRoom}.</p>
+     *
+     * <p><b>Ожидаемый результат (Then):</b> Выбрасывается {@code InvalidMaxPlayersException}.</p>
+     */
     @Test
     @DisplayName("Ошибка при создании комнаты с недопустимым maxPlayers (< 4 или > 12)")
     void createRoom_InvalidMaxPlayers_ThrowsException() {
@@ -111,13 +159,22 @@ class RoomServiceTest {
 
         CreateRoomRequest tooFewPlayers = new CreateRoomRequest("Партия", 3);
         assertThatThrownBy(() -> roomService.createRoom(creator, tooFewPlayers))
-                .isInstanceOf(InvalidRoomSettingsException.class);
+                .isInstanceOf(InvalidMaxPlayersException.class);
 
         CreateRoomRequest tooManyPlayers = new CreateRoomRequest("Партия", 13);
         assertThatThrownBy(() -> roomService.createRoom(creator, tooManyPlayers))
-                .isInstanceOf(InvalidRoomSettingsException.class);
+                .isInstanceOf(InvalidMaxPlayersException.class);
     }
 
+    /**
+     * Проверяет получение комнаты по коду в нижнем регистре.
+     *
+     * <p><b>Предусловия (Given):</b> Создана комната с кодом в верхнем регистре.</p>
+     *
+     * <p><b>Действие (When):</b> Поиск по коду в нижнем регистре {@code getRoomByCode(code.toLowerCase())}.</p>
+     *
+     * <p><b>Ожидаемый результат (Then):</b> Комната успешно найдена.</p>
+     */
     @Test
     @DisplayName("Получение состояния комнаты по коду (регистронезависимо)")
     void getRoomByCode_Success() {
@@ -130,6 +187,9 @@ class RoomServiceTest {
         assertThat(fetched.name()).isEqualTo("Тест");
     }
 
+    /**
+     * Проверяет выброс 404 RoomNotFoundException при поиске несуществующей комнаты.
+     */
     @Test
     @DisplayName("Получение комнаты по несуществующему коду выбрасывает RoomNotFoundException (404)")
     void getRoomByCode_NotFound_ThrowsException() {
@@ -137,6 +197,17 @@ class RoomServiceTest {
                 .isInstanceOf(RoomNotFoundException.class);
     }
 
+    /**
+     * Проверяет пересчет участников и переключение флага isReadyToStart при достижении 4 игроков.
+     *
+     * <p><b>Предусловия (Given):</b> В комнате на 6 человек находится 1 создатель.</p>
+     *
+     * <p><b>Действие (When):</b> По очереди подключаются 2-й, 3-й и 4-й игроки.</p>
+     *
+     * <p><b>Ожидаемый результат (Then):</b>
+     * При 2 и 3 игроках {@code isReadyToStart == false}, при 4 игроках {@code isReadyToStart == true}.
+     * </p>
+     */
     @Test
     @DisplayName("Подключение новых игроков пересчитывает currentPlayersCount и выставляет isReadyToStart при 4 игроках")
     void joinRoom_Success_AndReadyToStartAt4Players() {
@@ -164,6 +235,15 @@ class RoomServiceTest {
         assertThat(r4.isReadyToStart()).isTrue();
     }
 
+    /**
+     * Проверяет идемпотентность повторного подключения игрока: дубликаты не создаются.
+     *
+     * <p><b>Предусловия (Given):</b> В комнате находятся хост и второй игрок.</p>
+     *
+     * <p><b>Действие (When):</b> Второй игрок и хост повторно вызывают {@code joinRoom}.</p>
+     *
+     * <p><b>Ожидаемый результат (Then):</b> Число игроков не увеличивается, дубликаты отсутствуют.</p>
+     */
     @Test
     @DisplayName("Повторное подключение игрока идемпотентно, не создает дубликатов")
     void joinRoom_IdempotentReconnection_DoesNotDuplicate() {
@@ -184,6 +264,9 @@ class RoomServiceTest {
         assertThat(reconnectedCreator.players()).hasSize(2);
     }
 
+    /**
+     * Проверяет отказ при попытке подключения в заполненную комнату (ROOM_FULL).
+     */
     @Test
     @DisplayName("Отказ в подключении к заполненной комнате (ROOM_FULL)")
     void joinRoom_WhenFull_ThrowsRoomFullException() {
@@ -194,19 +277,20 @@ class RoomServiceTest {
         roomService.joinRoom(room.code(), TelegramUser.of("1003", "p3", "P3"));
         roomService.joinRoom(room.code(), TelegramUser.of("1004", "p4", "P4"));
 
-        // 5th player tries to join room with maxPlayers = 4
         TelegramUser player5 = TelegramUser.of("1005", "p5", "P5");
         assertThatThrownBy(() -> roomService.joinRoom(room.code(), player5))
                 .isInstanceOf(RoomFullException.class);
     }
 
+    /**
+     * Проверяет отказ в подключении к комнате, статус которой отличен от LOBBY.
+     */
     @Test
     @DisplayName("Отказ в подключении к комнате, если игра уже началась (ROOM_ALREADY_STARTED)")
     void joinRoom_WhenAlreadyStarted_ThrowsException() {
         TelegramUser creator = TelegramUser.of("1001", "creator", "Creator");
         RoomResponse room = roomService.createRoom(creator, new CreateRoomRequest("Партия", 6));
 
-        // Mark room as IN_PROGRESS
         RoomEntity rawRoom = roomJpaRepository.findByCode(room.code()).orElseThrow();
         rawRoom.setStatus(RoomStatus.IN_PROGRESS);
         roomJpaRepository.save(rawRoom);
@@ -216,6 +300,9 @@ class RoomServiceTest {
                 .isInstanceOf(RoomAlreadyStartedException.class);
     }
 
+    /**
+     * Проверяет выход обычного участника: участник удаляется, создатель не меняется.
+     */
     @Test
     @DisplayName("При выходе обычного участника он удаляется из комнаты")
     void leaveRoom_RegularParticipant() {
@@ -229,6 +316,9 @@ class RoomServiceTest {
         assertThat(afterLeave.creatorId()).isEqualTo("1001");
     }
 
+    /**
+     * Проверяет миграцию хоста: при выходе создателя права передаются игроку с самым ранним joinedAt.
+     */
     @Test
     @DisplayName("При выходе создателя права переходят участнику с самым ранним joinedAt")
     void leaveRoom_CreatorLeaves_HostMigratedToEarliestJoined() throws Exception {
@@ -243,7 +333,6 @@ class RoomServiceTest {
         TelegramUser player3 = TelegramUser.of("1003", "p3", "P3");
         roomService.joinRoom(room.code(), player3);
 
-        // Creator leaves
         RoomResponse afterCreatorLeaves = roomService.leaveRoom(room.code(), "1001");
 
         assertThat(afterCreatorLeaves.currentPlayersCount()).isEqualTo(2);
@@ -260,6 +349,9 @@ class RoomServiceTest {
         assertThat(otherPlayer.isCreator()).isFalse();
     }
 
+    /**
+     * Проверяет успешное обновление maxPlayers создателем комнаты.
+     */
     @Test
     @DisplayName("Обновление настроек создателем комнаты")
     void updateSettings_Success() {
@@ -270,6 +362,9 @@ class RoomServiceTest {
         assertThat(updated.maxPlayers()).isEqualTo(10);
     }
 
+    /**
+     * Проверяет отказ 403 Forbidden при попытке изменения настроек не создателем.
+     */
     @Test
     @DisplayName("Попытка изменения настроек не создателем вызывает ForbiddenException (403)")
     void updateSettings_ByNonCreator_ThrowsForbidden() {
@@ -281,6 +376,9 @@ class RoomServiceTest {
                 .isInstanceOf(ForbiddenException.class);
     }
 
+    /**
+     * Проверяет отказ при попытке уменьшить maxPlayers ниже текущего числа участников.
+     */
     @Test
     @DisplayName("Попытка уменьшить maxPlayers ниже текущего числа участников вызывает ошибку")
     void updateSettings_LessThanCurrentPlayers_ThrowsException() {
@@ -289,12 +387,15 @@ class RoomServiceTest {
         roomService.joinRoom(room.code(), TelegramUser.of("1002", "p2", "P2"));
         roomService.joinRoom(room.code(), TelegramUser.of("1003", "p3", "P3"));
         roomService.joinRoom(room.code(), TelegramUser.of("1004", "p4", "P4"));
-        roomService.joinRoom(room.code(), TelegramUser.of("1005", "p5", "P5")); // 5 players
+        roomService.joinRoom(room.code(), TelegramUser.of("1005", "p5", "P5"));
 
         assertThatThrownBy(() -> roomService.updateSettings(room.code(), "1001", 4))
-                .isInstanceOf(InvalidRoomSettingsException.class);
+                .isInstanceOf(InvalidMaxPlayersException.class);
     }
 
+    /**
+     * Проверяет отказ при передаче невалидного формата кода комнаты.
+     */
     @Test
     @DisplayName("Невалидный код комнаты выбрасывает InvalidRoomCodeException")
     void invalidRoomCode_ThrowsException() {

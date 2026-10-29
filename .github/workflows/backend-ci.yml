@@ -1,0 +1,65 @@
+name: Backend CI
+
+on:
+  push:
+    branches: [main, develop, "feature/**"]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Backend Build & Automated Tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: nechto_user
+          POSTGRES_PASSWORD: nechto_secret_password
+          POSTGRES_DB: nechto_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 25 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+          cache-dependency-path: apps/backend/pom.xml
+
+      - name: Grant execute permission for Maven wrapper
+        working-directory: apps/backend
+        run: chmod +x mvnw
+
+      - name: Run Maven Build and Automated Tests
+        working-directory: apps/backend
+        env:
+          DB_HOST: localhost
+          DB_PORT: 5432
+          DB_NAME: nechto_db
+          DB_USER: nechto_user
+          DB_PASSWORD: nechto_secret_password
+        run: ./mvnw --batch-mode clean verify
+
+      - name: Publish Test Report Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-test-reports
+          path: apps/backend/target/surefire-reports/
+          retention-days: 7
