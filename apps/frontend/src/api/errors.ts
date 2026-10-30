@@ -18,8 +18,15 @@ export class ApiError extends Error {
   }
 }
 
+export class NetworkError extends Error {
+  constructor() {
+    super('Не удалось подключиться к серверу. Проверьте соединение и попробуйте снова.')
+    this.name = 'NetworkError'
+  }
+}
+
 export function getErrorMessage(error: unknown): string {
-  if (error instanceof ApiError) {
+  if (error instanceof ApiError || error instanceof NetworkError) {
     return error.message
   }
   if (error instanceof Error) {

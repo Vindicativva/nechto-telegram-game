@@ -1,9 +1,9 @@
 import { API_URL } from '../config'
 import type { TelegramIdentity } from '../lib/telegram'
 import type { CreateRoomRequest, Room } from '../types/room'
-import { ApiError, type ApiErrorBody } from './errors'
+import { ApiError, NetworkError, type ApiErrorBody } from './errors'
 
-function authHeaders(identity: TelegramIdentity): HeadersInit {
+function authHeaders(identity: TelegramIdentity): Record<string, string> {
   const headers: Record<string, string> = {
     'X-Telegram-Id': identity.telegramId,
     'X-Telegram-Display-Name': identity.displayName,
@@ -14,37 +14,50 @@ function authHeaders(identity: TelegramIdentity): HeadersInit {
   return headers
 }
 
-async function parseResponse<T>(response: Response): Promise<T> {
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  let response: Response
+  try {
+    response = await fetch(`${API_URL}${path}`, init)
+  } catch {
+    throw new NetworkError()
+  }
+
   if (response.ok) {
     return (await response.json()) as T
   }
 
-  const body = (await response.json()) as { error: ApiErrorBody }
-  throw new ApiError(response.status, body.error)
+  try {
+    const body = (await response.json()) as { error: ApiErrorBody }
+    throw new ApiError(response.status, body.error)
+  } catch (parseError) {
+    if (parseError instanceof ApiError) throw parseError
+    throw new ApiError(response.status, {
+      code: 'UNKNOWN',
+      message: 'Сервер вернул непредвиденный ответ. Попробуйте ещё раз.',
+    })
+  }
 }
 
 export async function createRoom(
   identity: TelegramIdentity,
-  request: CreateRoomRequest,
+  body: CreateRoomRequest,
 ): Promise<Room> {
-  const response = await fetch(`${API_URL}/api/v1/rooms`, {
+  return request<Room>('/api/v1/rooms', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       ...authHeaders(identity),
     },
-    body: JSON.stringify(request),
+    body: JSON.stringify(body),
   })
-  return parseResponse<Room>(response)
 }
 
 export async function getRoom(code: string): Promise<Room> {
-  const response = await fetch(`${API_URL}/api/v1/rooms/${encodeURIComponent(code)}`)
-  return parseResponse<Room>(response)
+  return request<Room>(`/api/v1/rooms/${encodeURIComponent(code)}`)
 }
 
 export async function joinRoom(identity: TelegramIdentity, code: string): Promise<Room> {
-  const response = await fetch(`${API_URL}/api/v1/rooms/${encodeURIComponent(code)}/join`, {
+  return request<Room>(`/api/v1/rooms/${encodeURIComponent(code)}/join`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -52,11 +65,10 @@ export async function joinRoom(identity: TelegramIdentity, code: string): Promis
     },
     body: JSON.stringify({}),
   })
-  return parseResponse<Room>(response)
 }
 
 export async function leaveRoom(identity: TelegramIdentity, code: string): Promise<Room> {
-  const response = await fetch(`${API_URL}/api/v1/rooms/${encodeURIComponent(code)}/leave`, {
+  return request<Room>(`/api/v1/rooms/${encodeURIComponent(code)}/leave`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -64,5 +76,4 @@ export async function leaveRoom(identity: TelegramIdentity, code: string): Promi
     },
     body: JSON.stringify({}),
   })
-  return parseResponse<Room>(response)
 }

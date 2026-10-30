@@ -1,8 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import type { TelegramIdentity } from '../lib/telegram'
 import type { Room } from '../types/room'
-import { ApiError } from './errors'
-import { createRoom, joinRoom } from './rooms'
+import { ApiError, NetworkError } from './errors'
+import { createRoom, getRoom, joinRoom } from './rooms'
 
 const identity: TelegramIdentity = {
   telegramId: '123456789',
@@ -61,6 +61,51 @@ describe('createRoom', () => {
       code: 'ACTIVE_ROOM_ALREADY_EXISTS',
       status: 409,
     })
+  })
+
+  it('throws a friendly NetworkError when the server is unreachable', async () => {
+    vi.mocked(fetch).mockRejectedValue(new TypeError('Failed to fetch'))
+
+    const error = await createRoom(identity, { name: 'Игра', maxPlayers: 4 }).catch(
+      (caught: unknown) => caught,
+    )
+    expect(error).toBeInstanceOf(NetworkError)
+    expect((error as NetworkError).message).toMatch(/подключиться к серверу/)
+  })
+
+  it('falls back to a generic error when the error response body is not valid JSON', async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response('<html>502 Bad Gateway</html>', { status: 502 }))
+
+    const error = await createRoom(identity, { name: 'Игра', maxPlayers: 4 }).catch(
+      (caught: unknown) => caught,
+    )
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).status).toBe(502)
+  })
+})
+
+describe('getRoom', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn())
+  })
+
+  it('fetches the room state by code', async () => {
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify(room), { status: 200 }))
+
+    const result = await getRoom('X7K9M2')
+
+    expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/api/v1/rooms/X7K9M2'), undefined)
+    expect(result).toEqual(room)
+  })
+
+  it('rejects with ROOM_NOT_FOUND for an unknown code', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      new Response(JSON.stringify({ error: { code: 'ROOM_NOT_FOUND', message: 'Комната не найдена' } }), {
+        status: 404,
+      }),
+    )
+
+    await expect(getRoom('ZZZZZZ')).rejects.toMatchObject({ code: 'ROOM_NOT_FOUND', status: 404 })
   })
 })
 
