@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   frontend:
-    name: Frontend build
+    name: Frontend build and tests
     runs-on: ubuntu-latest
 
     steps:
@@ -32,6 +32,10 @@ jobs:
       - name: Lint
         working-directory: apps/frontend
         run: npm run lint --if-present
+
+      - name: Test
+        working-directory: apps/frontend
+        run: npm run test
 
       - name: Build
         working-directory: apps/frontend

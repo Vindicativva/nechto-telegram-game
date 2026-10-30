@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../api/errors'
@@ -58,6 +58,29 @@ describe('CreateRoomScreen', () => {
     resolveCreate(room)
     await screen.findByRole('button', { name: 'Создать' })
     expect(onCreated).toHaveBeenCalledWith(room)
+  })
+
+  it('ignores a resubmit while a create-room request is already in flight', async () => {
+    let resolveCreate!: (room: Room) => void
+    const createRoom = vi.spyOn(roomsApi, 'createRoom').mockReturnValue(
+      new Promise((resolve) => {
+        resolveCreate = resolve
+      }),
+    )
+    const user = userEvent.setup()
+
+    const { container } = render(
+      <CreateRoomScreen identity={identity} onBack={vi.fn()} onCreated={vi.fn()} />,
+    )
+    await user.type(screen.getByPlaceholderText('Вечерняя партия'), 'Моя комната')
+
+    const form = container.querySelector('form')
+    if (!form) throw new Error('form not found')
+    fireEvent.submit(form)
+    fireEvent.submit(form)
+
+    expect(createRoom).toHaveBeenCalledTimes(1)
+    resolveCreate(room)
   })
 
   it('shows the server error message when room creation fails', async () => {
