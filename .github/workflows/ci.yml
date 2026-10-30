@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   frontend:
-    name: Frontend build and tests
+    name: Frontend build
     runs-on: ubuntu-latest
 
     steps:
