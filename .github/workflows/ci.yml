@@ -33,6 +33,10 @@ jobs:
         working-directory: apps/frontend
         run: npm run lint --if-present
 
+      - name: Test
+        working-directory: apps/frontend
+        run: npm run test
+
       - name: Build
         working-directory: apps/frontend
         run: npm run build

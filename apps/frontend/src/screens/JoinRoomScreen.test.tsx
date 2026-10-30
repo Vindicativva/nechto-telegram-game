@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../api/errors'
@@ -36,6 +36,29 @@ describe('JoinRoomScreen', () => {
     expect(roomsApi.joinRoom).toHaveBeenCalledWith(identity, 'X7K9M2')
     await screen.findByRole('button', { name: 'Присоединиться' })
     expect(onJoined).toHaveBeenCalledWith(room)
+  })
+
+  it('ignores a resubmit while a join request is already in flight', async () => {
+    let resolveJoin!: (room: Room) => void
+    const joinRoom = vi.spyOn(roomsApi, 'joinRoom').mockReturnValue(
+      new Promise((resolve) => {
+        resolveJoin = resolve
+      }),
+    )
+    const user = userEvent.setup()
+
+    const { container } = render(
+      <JoinRoomScreen identity={identity} onBack={vi.fn()} onJoined={vi.fn()} />,
+    )
+    await user.type(screen.getByPlaceholderText('Код комнаты'), 'X7K9M2')
+
+    const form = container.querySelector('form')
+    if (!form) throw new Error('form not found')
+    fireEvent.submit(form)
+    fireEvent.submit(form)
+
+    expect(joinRoom).toHaveBeenCalledTimes(1)
+    resolveJoin(room)
   })
 
   it('rejects a too-short code locally before calling the API', async () => {
