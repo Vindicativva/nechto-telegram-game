@@ -1,78 +1,108 @@
+import { Client } from '@stomp/stompjs'
 import { useEffect, useRef, useState } from 'react'
 import { WS_URL } from '../config'
 import { applyRoomEvent } from '../lib/roomEventReducer'
 import type { TelegramIdentity } from '../lib/telegram'
 import type { Room } from '../types/room'
-import type { RoomWsEvent } from '../types/ws'
+import type { GameSocketConnectHeaders, RoomSubscription, RoomWsEvent } from '../types/ws'
 
-export type SocketStatus = 'connecting' | 'open' | 'reconnecting'
+export type SocketStatus = 'connecting' | 'open' | 'reconnecting' | 'error' | 'disconnected'
 
-const PING_INTERVAL_MS = 25_000
 const RECONNECT_DELAY_MS = 2_000
+const HEARTBEAT_MS = 20_000
 
-export interface UseRoomSocketResult {
+export interface UseGameSocketResult {
   room: Room
   status: SocketStatus
 }
 
-export function useRoomSocket(
-  code: string,
-  identity: TelegramIdentity,
-  initialRoom: Room,
-): UseRoomSocketResult {
+export interface UseGameSocketOptions {
+  code: string
+  identity: TelegramIdentity
+  initialRoom: Room
+  /** Signed Telegram initData. The backend must validate it before trusting headers. */
+  initData?: string
+}
+
+function roomDestination(code: string): RoomSubscription['destination'] {
+  return `/topic/room/${encodeURIComponent(code)}`
+}
+
+function parseRoomEvent(body: string): RoomWsEvent | undefined {
+  try {
+    const value: unknown = JSON.parse(body)
+    if (typeof value === 'object' && value !== null && 'event' in value) {
+      return value as RoomWsEvent
+    }
+  } catch {
+    // A malformed network frame must never take down the React tree.
+  }
+  return undefined
+}
+
+/** Keeps a STOMP connection for a lobby room alive and exposes its network state to the UI. */
+export function useGameSocket({
+  code,
+  identity,
+  initialRoom,
+  initData,
+}: UseGameSocketOptions): UseGameSocketResult {
   const [room, setRoom] = useState(initialRoom)
   const [status, setStatus] = useState<SocketStatus>('connecting')
   const roomRef = useRef(initialRoom)
 
   useEffect(() => {
-    let cancelled = false
-    let socket: WebSocket | undefined
-    let pingTimer: ReturnType<typeof setInterval> | undefined
-    let reconnectTimer: ReturnType<typeof setTimeout> | undefined
+    let disposed = false
+    const connectHeaders: GameSocketConnectHeaders = {
+      'X-Telegram-Id': identity.telegramId,
+      'X-Telegram-Display-Name': identity.displayName,
+      ...(identity.username ? { 'X-Telegram-Username': identity.username } : {}),
+      ...(initData ? { 'X-Telegram-Init-Data': initData } : {}),
+    }
 
-    function connect(isReconnect: boolean) {
-      if (cancelled) return
-      setStatus(isReconnect ? 'reconnecting' : 'connecting')
-
-      const params = new URLSearchParams({
-        telegramId: identity.telegramId,
-        displayName: identity.displayName,
-      })
-      socket = new WebSocket(`${WS_URL}/ws/rooms/${encodeURIComponent(code)}?${params}`)
-
-      socket.onopen = () => {
-        if (cancelled) return
+    const client = new Client({
+      brokerURL: `${WS_URL}/ws`,
+      connectHeaders,
+      reconnectDelay: RECONNECT_DELAY_MS,
+      heartbeatIncoming: HEARTBEAT_MS,
+      heartbeatOutgoing: HEARTBEAT_MS,
+      onConnect: () => {
+        if (disposed) return
         setStatus('open')
-        pingTimer = setInterval(() => {
-          socket?.send(JSON.stringify({ event: 'ping' }))
-        }, PING_INTERVAL_MS)
-      }
+        client.subscribe(roomDestination(code), (message) => {
+          const event = parseRoomEvent(message.body)
+          if (!event || disposed) return
+          const next = applyRoomEvent(roomRef.current, event)
+          roomRef.current = next
+          setRoom(next)
+        })
+      },
+      onWebSocketClose: () => {
+        if (!disposed) setStatus('reconnecting')
+      },
+      onWebSocketError: () => {
+        if (!disposed) setStatus('error')
+      },
+      onStompError: () => {
+        if (!disposed) setStatus('error')
+      },
+    })
 
-      socket.onmessage = (message: MessageEvent<string>) => {
-        if (cancelled) return
-        const parsed = JSON.parse(message.data) as RoomWsEvent
-        const next = applyRoomEvent(roomRef.current, parsed)
-        roomRef.current = next
-        setRoom(next)
-      }
-
-      socket.onclose = () => {
-        if (cancelled) return
-        if (pingTimer) clearInterval(pingTimer)
-        setStatus('reconnecting')
-        reconnectTimer = setTimeout(() => connect(true), RECONNECT_DELAY_MS)
-      }
-    }
-
-    connect(false)
-
+    client.activate()
     return () => {
-      cancelled = true
-      if (pingTimer) clearInterval(pingTimer)
-      if (reconnectTimer) clearTimeout(reconnectTimer)
-      socket?.close()
+      disposed = true
+      void client.deactivate()
     }
-  }, [code, identity.telegramId, identity.displayName])
+  }, [code, identity.telegramId, identity.username, identity.displayName, initData])
 
   return { room, status }
+}
+
+/** @deprecated Use useGameSocket for new code. */
+export function useRoomSocket(
+  code: string,
+  identity: TelegramIdentity,
+  initialRoom: Room,
+): UseGameSocketResult {
+  return useGameSocket({ code, identity, initialRoom })
 }

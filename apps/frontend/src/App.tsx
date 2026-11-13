@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { TelegramGate } from './components/TelegramGate'
-import { getTelegramIdentity, initTelegramWebApp } from './lib/telegram'
+import { getTelegramAuthentication, getTelegramIdentity, initTelegramWebApp } from './lib/telegram'
 import { CreateRoomScreen } from './screens/CreateRoomScreen'
 import { HomeScreen } from './screens/HomeScreen'
 import { JoinRoomScreen } from './screens/JoinRoomScreen'
@@ -17,6 +17,7 @@ type ScreenState =
 function App() {
   const [screen, setScreen] = useState<ScreenState>({ kind: 'home' })
   const identity = useMemo(() => getTelegramIdentity(), [])
+  const telegramAuthentication = useMemo(() => getTelegramAuthentication(), [])
 
   useEffect(() => {
     initTelegramWebApp()
@@ -58,6 +59,7 @@ function App() {
         <LobbyScreen
           identity={identity}
           initialRoom={screen.room}
+          initData={telegramAuthentication?.initData}
           onLeave={() => setScreen({ kind: 'home' })}
         />
       )
