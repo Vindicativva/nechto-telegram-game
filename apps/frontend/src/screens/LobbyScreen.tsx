@@ -25,6 +25,8 @@ export function LobbyScreen({ identity, initialRoom, onLeave }: LobbyScreenProps
   const { room, status } = useRoomSocket(initialRoom.code, identity, initialRoom)
   const [isLeaving, setIsLeaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const isHost = room.creatorId === identity.telegramId
+  const canStart = isHost && room.status === 'LOBBY' && room.currentPlayersCount >= 4
 
   const handleLeave = () => {
     if (isLeaving) return
@@ -40,7 +42,7 @@ export function LobbyScreen({ identity, initialRoom, onLeave }: LobbyScreenProps
     <main className="screen">
       <h1 className="title title-small">{room.name}</h1>
 
-      <RoomCodeBadge code={room.code} />
+      <RoomCodeBadge code={room.code} inviteLink={room.inviteLink} />
 
       <p className="connection-status">{CONNECTION_LABEL[status]}</p>
 
@@ -53,9 +55,19 @@ export function LobbyScreen({ identity, initialRoom, onLeave }: LobbyScreenProps
 
       <ParticipantList players={room.players} currentTelegramId={identity.telegramId} />
 
-      {error && <ErrorBanner message={error} />}
+      {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
 
       <div className="actions">
+        {isHost && (
+          <Button
+            type="button"
+            variant="primary"
+            disabled={!canStart}
+            title={!canStart ? 'Для начала игры нужно минимум 4 игрока' : undefined}
+          >
+            Начать игру
+          </Button>
+        )}
         <Button variant="ghost" onClick={handleLeave} isLoading={isLeaving}>
           Покинуть комнату
         </Button>

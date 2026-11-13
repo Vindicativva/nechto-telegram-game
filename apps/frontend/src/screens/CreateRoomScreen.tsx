@@ -64,7 +64,7 @@ export function CreateRoomScreen({ identity, onBack, onCreated }: CreateRoomScre
           <PlayerCountStepper value={maxPlayers} onChange={setMaxPlayers} disabled={isSubmitting} />
         </label>
 
-        {error && <ErrorBanner message={error} />}
+        {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
 
         <div className="actions">
           <Button type="submit" variant="primary" isLoading={isSubmitting}>

@@ -12,13 +12,13 @@ describe('RoomCodeBadge', () => {
       configurable: true,
     })
 
-    render(<RoomCodeBadge code="X7K9M2" />)
+    render(<RoomCodeBadge code="X7K9M2" inviteLink="https://t.me/StayAwayGameBot/app?startapp=X7K9M2" />)
 
     expect(screen.getByText('X7K9M2')).toBeInTheDocument()
 
-    await user.click(screen.getByRole('button', { name: 'Копировать' }))
+    await user.click(screen.getByRole('button', { name: 'Скопировать ссылку' }))
 
-    expect(writeText).toHaveBeenCalledWith('X7K9M2')
+    expect(writeText).toHaveBeenCalledWith('https://t.me/StayAwayGameBot/app?startapp=X7K9M2')
     await waitFor(() => expect(screen.getByRole('button', { name: 'Скопировано' })).toBeInTheDocument())
   })
 })

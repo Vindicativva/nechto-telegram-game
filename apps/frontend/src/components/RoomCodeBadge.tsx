@@ -2,6 +2,7 @@ import { useState } from 'react'
 
 interface RoomCodeBadgeProps {
   code: string
+  inviteLink: string
 }
 
 async function copyToClipboard(text: string): Promise<boolean> {
@@ -29,11 +30,11 @@ async function copyToClipboard(text: string): Promise<boolean> {
   }
 }
 
-export function RoomCodeBadge({ code }: RoomCodeBadgeProps) {
+export function RoomCodeBadge({ code, inviteLink }: RoomCodeBadgeProps) {
   const [copied, setCopied] = useState(false)
 
   const handleCopy = () => {
-    void copyToClipboard(code).then((success) => {
+    void copyToClipboard(inviteLink || code).then((success) => {
       if (!success) return
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
@@ -46,9 +47,10 @@ export function RoomCodeBadge({ code }: RoomCodeBadgeProps) {
       <div className="room-code-badge-row">
         <span className="room-code-badge-value">{code}</span>
         <button type="button" className="btn btn-ghost btn-small" onClick={handleCopy}>
-          {copied ? 'Скопировано' : 'Копировать'}
+          {copied ? 'Скопировано' : 'Скопировать ссылку'}
         </button>
       </div>
+      {inviteLink && <span className="invite-link">{inviteLink}</span>}
     </div>
   )
 }

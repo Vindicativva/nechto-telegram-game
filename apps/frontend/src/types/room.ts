@@ -34,4 +34,4 @@ export interface CreateRoomRequest {
 export const MIN_PLAYERS = 4
 export const MAX_PLAYERS = 12
 
-export const ROOM_CODE_PATTERN = /^[A-Z0-9]{4,12}$/
+export const ROOM_CODE_PATTERN = /^[A-Z0-9]{6}$/

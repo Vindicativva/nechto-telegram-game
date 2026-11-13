@@ -69,7 +69,7 @@ describe('JoinRoomScreen', () => {
     await user.type(screen.getByPlaceholderText('Код комнаты'), 'AB')
     await user.click(screen.getByRole('button', { name: 'Присоединиться' }))
 
-    expect(screen.getByRole('alert')).toHaveTextContent('от 4 до 12 символов')
+    expect(screen.getByRole('alert')).toHaveTextContent('шестизначный код')
     expect(joinRoom).not.toHaveBeenCalled()
   })
 
