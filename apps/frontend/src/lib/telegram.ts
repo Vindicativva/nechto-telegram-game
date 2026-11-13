@@ -8,6 +8,8 @@ export interface TelegramWebAppUser {
 interface TelegramWebApp {
   ready: () => void
   expand: () => void
+  /** Signed, opaque data which must be verified by the backend with the bot token. */
+  initData?: string
   initDataUnsafe?: {
     user?: TelegramWebAppUser
   }
@@ -27,8 +29,14 @@ export interface TelegramIdentity {
   displayName: string
 }
 
+export interface TelegramAuthentication {
+  identity: TelegramIdentity
+  /** Do not parse or trust this on the client; pass it to the backend for verification. */
+  initData: string
+}
+
 export function getTelegramWebApp(): TelegramWebApp | undefined {
-  return window.Telegram?.WebApp
+  return typeof window === 'undefined' ? undefined : window.Telegram?.WebApp
 }
 
 export function initTelegramWebApp(): void {
@@ -48,4 +56,18 @@ export function getTelegramIdentity(): TelegramIdentity | undefined {
     username: user.username ?? null,
     displayName: [user.first_name, user.last_name].filter(Boolean).join(' '),
   }
+}
+
+/**
+ * Returns the display identity together with Telegram's original signed
+ * `initData`. `initDataUnsafe` is used only to render a name; authorization
+ * must always be based on `initData` verified by the server.
+ */
+export function getTelegramAuthentication(): TelegramAuthentication | undefined {
+  const identity = getTelegramIdentity()
+  const initData = getTelegramWebApp()?.initData
+
+  if (!identity || !initData) return undefined
+
+  return { identity, initData }
 }

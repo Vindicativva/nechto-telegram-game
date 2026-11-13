@@ -5,24 +5,27 @@ import { Button } from '../components/Button'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { ParticipantList } from '../components/ParticipantList'
 import { RoomCodeBadge } from '../components/RoomCodeBadge'
-import { useRoomSocket } from '../hooks/useRoomSocket'
+import { useGameSocket } from '../hooks/useRoomSocket'
 import type { TelegramIdentity } from '../lib/telegram'
 import type { Room } from '../types/room'
 
 interface LobbyScreenProps {
   identity: TelegramIdentity
   initialRoom: Room
+  initData?: string
   onLeave: () => void
 }
 
-const CONNECTION_LABEL: Record<'connecting' | 'open' | 'reconnecting', string> = {
+const CONNECTION_LABEL: Record<'connecting' | 'open' | 'reconnecting' | 'error' | 'disconnected', string> = {
   connecting: 'Подключение…',
   open: 'На связи',
   reconnecting: 'Переподключение…',
+  error: 'Ошибка сети. Повторное подключение…',
+  disconnected: 'Нет соединения',
 }
 
-export function LobbyScreen({ identity, initialRoom, onLeave }: LobbyScreenProps) {
-  const { room, status } = useRoomSocket(initialRoom.code, identity, initialRoom)
+export function LobbyScreen({ identity, initialRoom, initData, onLeave }: LobbyScreenProps) {
+  const { room, status } = useGameSocket({ code: initialRoom.code, identity, initialRoom, initData })
   const [isLeaving, setIsLeaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const isHost = room.creatorId === identity.telegramId
