@@ -9,6 +9,7 @@
   max-width: 420px;
   margin: 0 auto;
   padding: 24px 20px;
+  min-width: 0;
 }
 
 .title {
@@ -42,6 +43,10 @@
   display: flex;
   flex-direction: column;
   gap: 20px;
+}
+
+.form > * {
+  min-width: 0;
 }
 
 .field {
@@ -172,13 +177,37 @@
   font-weight: 700;
 }
 
-.error-banner {
+.toast {
+  position: fixed;
+  z-index: 10;
+  top: max(16px, env(safe-area-inset-top));
+  left: 50%;
+  display: flex;
+  width: min(calc(100vw - 32px), 420px);
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   padding: 12px 16px;
   border-radius: 10px;
+  transform: translateX(-50%);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+}
+
+.toast-error {
   background: rgba(255, 92, 92, 0.12);
   border: 1px solid rgba(255, 92, 92, 0.4);
   color: #ff8080;
   font-size: 0.9rem;
+}
+
+.toast-close {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 1.4rem;
+  line-height: 1;
 }
 
 .room-code-badge {
@@ -197,6 +226,15 @@
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.invite-link {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .room-code-badge-value {
@@ -240,6 +278,8 @@
 
 .participant-name {
   flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .participant-badge {

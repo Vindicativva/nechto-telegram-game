@@ -13,7 +13,7 @@ export function RoomCodeInput({ value, onChange, disabled = false }: RoomCodeInp
       autoCapitalize="characters"
       autoComplete="off"
       placeholder="Код комнаты"
-      maxLength={12}
+      maxLength={6}
       value={value}
       disabled={disabled}
       onChange={(event) => onChange(event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}

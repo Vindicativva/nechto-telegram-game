@@ -23,7 +23,7 @@ export function JoinRoomScreen({ identity, onBack, onJoined }: JoinRoomScreenPro
     if (isSubmitting) return
 
     if (!ROOM_CODE_PATTERN.test(code)) {
-      setError('Код комнаты должен содержать от 4 до 12 символов (A-Z, 0-9)')
+      setError('Введите шестизначный код комнаты (A-Z, 0-9)')
       return
     }
 
@@ -42,7 +42,7 @@ export function JoinRoomScreen({ identity, onBack, onJoined }: JoinRoomScreenPro
       <form className="form" onSubmit={handleSubmit}>
         <RoomCodeInput value={code} onChange={setCode} disabled={isSubmitting} />
 
-        {error && <ErrorBanner message={error} />}
+        {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
 
         <div className="actions">
           <Button type="submit" variant="primary" isLoading={isSubmitting}>
