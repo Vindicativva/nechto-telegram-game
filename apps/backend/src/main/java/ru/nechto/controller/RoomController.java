@@ -31,7 +31,7 @@ import java.util.Map;
 
 @Tag(name = "Rooms", description = "REST API для управления игровыми комнатами и лобби")
 @RestController
-@RequestMapping("/api/v1/rooms")
+@RequestMapping({"/api/v1/rooms", "/api/rooms"})
 public class RoomController {
     private final RoomService roomService;
 

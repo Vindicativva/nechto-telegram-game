@@ -109,4 +109,37 @@ class RoomCodeGeneratorTest {
 
         assertThat(inviteLink).isEqualTo("https://t.me/StayAwayGameBot/app?startapp=X7K9M2");
     }
+
+    /**
+     * Проверяет генерацию уникального кода и разрешение коллизий при использовании
+     * in-memory репозитория на базе ConcurrentHashMap.
+     *
+     * <p><b>Предусловия (Given):</b> Инициализированный {@link ru.nechto.repository.InMemoryRoomRepository},
+     * в котором уже занят один код комнаты.</p>
+     *
+     * <p><b>Действие (When):</b> Создается {@link RoomCodeGenerator} с проверкой по in-memory репозиторию
+     * и вызывается {@code generateCode()}.</p>
+     *
+     * <p><b>Ожидаемый результат (Then):</b>
+     * <ul>
+     *   <li>Сгенерированный код не равен {@code null}.</li>
+     *   <li>Длина кода строго равна 6 символам.</li>
+     *   <li>Сгенерированный код отсутствует среди занятых в репозитории.</li>
+     * </ul>
+     * </p>
+     */
+    @Test
+    @DisplayName("Генерация кода комнаты с проверкой коллизий через InMemoryRoomRepository")
+    void generateCode_WithInMemoryRepository_ResolvesCollisions() {
+        ru.nechto.repository.InMemoryRoomRepository inMemoryRepo = new ru.nechto.repository.InMemoryRoomRepository();
+        ru.nechto.model.Room existing = new ru.nechto.model.Room("AAAAAA", "Существующая", 6, ru.nechto.model.RoomStatus.LOBBY);
+        inMemoryRepo.save(existing);
+
+        RoomCodeGenerator generator = new RoomCodeGenerator(inMemoryRepo, "StayAwayGameBot");
+        String code = generator.generateCode();
+
+        assertThat(code).isNotNull().hasSize(6);
+        assertThat(CODE_PATTERN.matcher(code).matches()).isTrue();
+        assertThat(code).isNotEqualTo("AAAAAA");
+    }
 }

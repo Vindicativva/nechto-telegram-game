@@ -11,8 +11,13 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Потокобезопасный in-memory репозиторий игровых комнат на базе {@link ConcurrentHashMap}.
+ * Обеспечивает сохранение, поиск и удаление комнат в оперативной памяти сервера без блокировок.
+ */
 @Repository
 public class InMemoryRoomRepository implements RoomRepository {
+
     private final Map<String, Room> roomsByCode = new ConcurrentHashMap<>();
 
     private String normalizeCode(String code) {
@@ -71,4 +76,19 @@ public class InMemoryRoomRepository implements RoomRepository {
     public List<Room> findAll() {
         return List.copyOf(roomsByCode.values());
     }
+
+    /**
+     * Возвращает текущее количество сохраненных комнат.
+     */
+    public int count() {
+        return roomsByCode.size();
+    }
+
+    /**
+     * Очищает репозиторий (для изоляции тестов).
+     */
+    public void clear() {
+        roomsByCode.clear();
+    }
 }
+

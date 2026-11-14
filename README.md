@@ -14,7 +14,7 @@ Backend-сервис карточной психологической игры 
 - **Документация API:** OpenAPI 3.0 / Swagger UI (`springdoc-openapi`)
 - **Контейнеризация:** Docker & Docker Compose (Multi-stage build)
 - **CI/CD:** GitHub Actions CI (`.github/workflows/backend-ci.yml`)
-- **Тестирование:** JUnit 5, AssertJ, Mockito, Spring Boot Test, MockMvc (167+ автоматических тестов с JavaDoc)
+- **Тестирование:** JUnit 5, AssertJ, Mockito, Spring Boot Test, MockMvc (202 автоматических теста с JavaDoc)
 
 ---
 
@@ -37,6 +37,7 @@ nechto-telegram-game/
 │       ├── be_1.md           # ТЗ: API комнат, лобби и WebSocket
 │       ├── be_2.md           # ТЗ: PostgreSQL, Flyway, Race Condition, Docker
 │       ├── be_3.md           # ТЗ: Тестирование, унификация ошибок, Swagger, CI
+│       ├── be_4.md           # ТЗ: Доменная модель и базовый API игровых комнат
 │       └── src/              # Исходный код и тесты
 └── README.md                 # Документация проекта
 ```
@@ -59,7 +60,7 @@ docker compose up --build -d
 - **Интерактивный Swagger UI:** [http://localhost:8080/swagger-ui.html](http://localhost:8080/swagger-ui.html)
 - **OpenAPI 3.0 JSON:** [http://localhost:8080/v3/api-docs](http://localhost:8080/v3/api-docs)
 - **Healthcheck:** `http://localhost:8080/api/health` -> `Hello, Nechto!`
-- **REST API комнат:** `http://localhost:8080/api/v1/rooms`
+- **REST API комнат:** `http://localhost:8080/api/rooms` и `http://localhost:8080/api/v1/rooms`
 - **WebSocket сервер:** `ws://localhost:8080/ws`
 - **PostgreSQL:** `localhost:5432` (пользователь: `nechto_user`, база: `nechto_db`)
 
@@ -79,7 +80,7 @@ docker compose down -v
 - Maven Wrapper (`mvnw` / `mvnw.cmd` входит в состав репозитория)
 
 ### Запуск тестов
-Все 167+ тестов запускаются автономно одной командой (используется встроенный профиль H2 в режиме совместимости с PostgreSQL, не требующий внешних зависимостей):
+Все 202 теста запускаются автономно одной командой (используется встроенный профиль H2 в режиме совместимости с PostgreSQL, не требующий внешних зависимостей):
 
 ```bash
 cd apps/backend

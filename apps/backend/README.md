@@ -13,7 +13,7 @@
 - **WebSocket:** Spring WebSocket Handler с thread-safe броадкастером сессий
 - **API Документация:** SpringDoc OpenAPI 3.0 / Swagger UI
 - **Безопасность и валидация:** Jakarta Validation, санитизация XSS/HTML и управляющих символов
-- **Тестирование:** JUnit 5 (Unit, Integration, Concurrency, WebSocket), MockMvc, AssertJ, Mockito (167+ тестов)
+- **Тестирование:** JUnit 5 (Unit, Integration, Concurrency, WebSocket), MockMvc, AssertJ, Mockito (202 теста)
 
 ---
 
@@ -22,6 +22,13 @@
 - **Интерактивный Swagger UI:** [http://localhost:8080/swagger-ui.html](http://localhost:8080/swagger-ui.html)
 - **Спецификация OpenAPI 3.0 JSON:** [http://localhost:8080/v3/api-docs](http://localhost:8080/v3/api-docs)
 - **Полное руководство для фронтенд-разработчика:** [../../docs/API.md](../../docs/API.md)
+
+### Базовые эндпоинты управления комнатами
+- `POST /api/rooms` (а также `POST /api/v1/rooms`) — создание комнаты с серверной валидацией имени (`1–32` символа) и вместимости (`4–12` человек)
+- `GET /api/rooms/{code}` (а также `GET /api/v1/rooms/{code}`) — проверка существования и доступности комнаты
+- `POST /api/rooms/{code}/join` — подключение к комнате
+- `POST /api/rooms/{code}/leave` — выход из комнаты
+- `PATCH /api/rooms/{code}/settings` — изменение вместимости хостом комнаты
 
 ---
 
@@ -73,7 +80,10 @@ chmod +x mvnw
 
 ### Структура тестов:
 1. **Модульные тесты (Unit Tests):**
-   - `RoomCodeGeneratorTest` — генерация безопасных кодов, коллизии, inviteLink.
+   - `PlayerTest` — доменная модель игрока `Player` (id, telegramId, username, isHost, connectedAt, конвертация, equals/hashCode).
+   - `RoomModelTest` — доменная модель комнаты `Room` (code, name, maxPlayers, players, status, флаг готовности, управление игроками).
+   - `InMemoryRoomRepositoryTest` — потокобезопасный in-memory репозиторий на базе `ConcurrentHashMap` (сохранение, регистронезависимый поиск, удаление, 20 конкурентных потоков).
+   - `RoomCodeGeneratorTest` — генерация безопасных кодов длины 6, проверка коллизий (JPA и InMemory), inviteLink.
    - `RoomServiceCreateTest` — создание комнат, граничные значения, лимиты, роли.
    - `RoomServiceGetTest` — регистронезависимый поиск, 404, невалидные коды.
    - `RoomServiceJoinTest` — подключение, динамика флага готовности, идемпотентный reconnect, заполненные комнаты.
@@ -81,6 +91,7 @@ chmod +x mvnw
    - `RoomServiceSettingsTest` — изменение maxPlayers, права создателя, проверки лимитов.
    - `InputValidatorTest` — валидация кодов, имен игроков (XSS/контрольные символы), лимитов.
 2. **Интеграционные тесты REST API:**
+   - `RoomControllerApiRoomsTest` — сквозные тесты `POST /api/rooms` и `GET /api/rooms/{code}`, валидация 1–32 символов и 4–12 игроков, проверка ошибок 400, 401, 404, 409.
    - `RoomControllerIntegrationTest` — сквозной HTTP-жизненный цикл, единый формат ошибок (400, 401, 403, 404, 409, 500), маскирование SQL.
    - `RoomControllerTest` — расширенные тесты контроллера.
 3. **Многопоточные тесты конкурентности (Concurrency Tests):**

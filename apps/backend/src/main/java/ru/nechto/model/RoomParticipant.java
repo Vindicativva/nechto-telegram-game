@@ -79,6 +79,14 @@ public class RoomParticipant {
         isCreator = creator;
     }
 
+    public boolean isHost() {
+        return isCreator;
+    }
+
+    public void setHost(boolean host) {
+        this.isCreator = host;
+    }
+
     public ConnectionStatus getConnectionStatus() {
         return connectionStatus;
     }
@@ -93,6 +101,14 @@ public class RoomParticipant {
 
     public void setJoinedAt(Instant joinedAt) {
         this.joinedAt = joinedAt;
+    }
+
+    public Instant getConnectedAt() {
+        return joinedAt;
+    }
+
+    public void setConnectedAt(Instant connectedAt) {
+        this.joinedAt = connectedAt;
     }
 
     public Instant getDisconnectedAt() {
