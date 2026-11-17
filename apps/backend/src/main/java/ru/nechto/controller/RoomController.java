@@ -189,6 +189,41 @@ public class RoomController {
         return ResponseEntity.ok(response);
     }
 
+    @Operation(summary = "Запуск игры", description = "Позволяет создателю комнаты запустить игру при наличии от 4 до 12 игроков.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Игра успешно запущена",
+                    content = @Content(schema = @Schema(implementation = RoomResponse.class))),
+            @ApiResponse(responseCode = "400", description = "Некорректный код комнаты (INVALID_ROOM_CODE)",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "401", description = "Не переданы данные пользователя Telegram (UNAUTHORIZED)",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "403", description = "Пользователь не является создателем комнаты (FORBIDDEN_NOT_CREATOR)",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "404", description = "Комната не найдена (ROOM_NOT_FOUND)",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "409", description = "Недостаточно игроков или игра уже начата (NOT_ENOUGH_PLAYERS, ROOM_ALREADY_STARTED)",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
+    @PostMapping("/{code}/start")
+    public ResponseEntity<RoomResponse> startGame(
+            @Parameter(description = "Код комнаты", example = "X7K9M2")
+            @PathVariable String code,
+            @Parameter(description = "ID пользователя в Telegram")
+            @RequestHeader(value = "X-Telegram-Id", required = false) String headerTelegramId,
+            @RequestBody(required = false) Map<String, Object> body) {
+
+        String telegramId = (headerTelegramId != null && !headerTelegramId.isBlank()) ?
+                headerTelegramId.trim() : (body != null && body.containsKey("telegramId") ?
+                String.valueOf(body.get("telegramId")).trim() : null);
+
+        if (telegramId == null || telegramId.isBlank()) {
+            throw new UnauthorizedException();
+        }
+
+        RoomResponse response = roomService.startGame(code, telegramId);
+        return ResponseEntity.ok(response);
+    }
+
     private TelegramUser resolveTelegramUser(String headerId, String headerUsername, String headerDisplayName,
                                              String bodyId, String bodyUsername, String bodyDisplayName) {
         String id = (headerId != null && !headerId.isBlank()) ? headerId.trim() : bodyId;

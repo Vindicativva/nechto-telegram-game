@@ -2,10 +2,14 @@ package ru.nechto.websocket;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
 import tools.jackson.databind.ObjectMapper;
+import ru.nechto.dto.response.RoomResponse;
+import ru.nechto.dto.ws.RoomStateEvent;
 
 import java.io.IOException;
 import java.util.Locale;
@@ -13,18 +17,30 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Броадкастер событий игровой комнаты.
+ * Обеспечивает рассылку сообщений как по "сырым" WebSocket-сессиям, так и через STOMP-топики /topic/room/{code}.
+ */
 @Component
 public class RoomWebSocketBroadcaster {
     private static final Logger log = LoggerFactory.getLogger(RoomWebSocketBroadcaster.class);
 
     private final ObjectMapper objectMapper;
+    private final SimpMessagingTemplate messagingTemplate;
     private final Map<String, Set<WebSocketSession>> roomSessions = new ConcurrentHashMap<>();
     private final Map<String, SessionMeta> sessionMetaMap = new ConcurrentHashMap<>();
 
     public record SessionMeta(String sessionId, String roomCode, String telegramId) {}
 
-    public RoomWebSocketBroadcaster(ObjectMapper objectMapper) {
+    @org.springframework.beans.factory.annotation.Autowired
+    public RoomWebSocketBroadcaster(ObjectMapper objectMapper,
+                                    @Lazy SimpMessagingTemplate messagingTemplate) {
         this.objectMapper = objectMapper;
+        this.messagingTemplate = messagingTemplate;
+    }
+
+    public RoomWebSocketBroadcaster(ObjectMapper objectMapper) {
+        this(objectMapper, null);
     }
 
     private String normalizeCode(String code) {
@@ -87,28 +103,44 @@ public class RoomWebSocketBroadcaster {
         broadcastToRoomExcept(roomCode, payload, null);
     }
 
+    public void broadcastRoomState(String roomCode, RoomResponse roomResponse) {
+        broadcastToRoom(roomCode, RoomStateEvent.of(roomResponse));
+    }
+
     public void broadcastToRoomExcept(String roomCode, Object payload, WebSocketSession excludedSession) {
         String normalized = normalizeCode(roomCode);
-        Set<WebSocketSession> sessions = roomSessions.get(normalized);
-        if (sessions == null || sessions.isEmpty()) return;
 
-        try {
-            String json = objectMapper.writeValueAsString(payload);
-            for (WebSocketSession session : sessions) {
-                if (session.isOpen() && (excludedSession == null || !session.getId().equals(excludedSession.getId()))) {
-                    try {
-                        synchronized (session) {
-                            if (session.isOpen()) {
-                                session.sendMessage(new TextMessage(json));
+        // 1. Broadcast to raw WebSocket sessions
+        Set<WebSocketSession> sessions = roomSessions.get(normalized);
+        if (sessions != null && !sessions.isEmpty()) {
+            try {
+                String json = objectMapper.writeValueAsString(payload);
+                for (WebSocketSession session : sessions) {
+                    if (session.isOpen() && (excludedSession == null || !session.getId().equals(excludedSession.getId()))) {
+                        try {
+                            synchronized (session) {
+                                if (session.isOpen()) {
+                                    session.sendMessage(new TextMessage(json));
+                                }
                             }
+                        } catch (IOException e) {
+                            log.error("Failed to broadcast to session {}", session.getId(), e);
                         }
-                    } catch (IOException e) {
-                        log.error("Failed to broadcast to session {}", session.getId(), e);
                     }
                 }
+            } catch (Exception e) {
+                log.error("Failed to serialize WebSocket message for broadcast to room {}", normalized, e);
             }
-        } catch (Exception e) {
-            log.error("Failed to serialize WebSocket message for broadcast to room {}", normalized, e);
+        }
+
+        // 2. Broadcast to STOMP message broker topic: /topic/room/{code}
+        if (messagingTemplate != null) {
+            try {
+                String json = objectMapper.writeValueAsString(payload);
+                messagingTemplate.convertAndSend("/topic/room/" + normalized, json);
+            } catch (Exception e) {
+                log.error("Failed to broadcast STOMP message to /topic/room/{}", normalized, e);
+            }
         }
     }
 }
