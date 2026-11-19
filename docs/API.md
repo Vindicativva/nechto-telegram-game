@@ -2,6 +2,8 @@
 
 Данный документ содержит полное описание контрактов REST API и WebSocket-протокола бэкенда для интеграции с клиентом (Frontend / Telegram Mini App).
 
+> **Официальная спецификация протокола лобби (PO-4):** [docs/api/lobby-protocol.md](api/lobby-protocol.md) (содержит детальные схемы DTO, события JOIN_ROOM, LEAVE_ROOM, START_GAME, схему ROOM_STATE, Sequence-диаграммы и требования ТЗ 4.1.1.2 / 4.2.1).
+
 ---
 
 ## 1. Общие сведения и интерактивная документация (Swagger)
