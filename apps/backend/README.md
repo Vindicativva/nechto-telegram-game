@@ -13,7 +13,7 @@
 - **WebSocket:** Spring WebSocket Handler и брокер сообщений STOMP (`/ws-game`, `/topic/room/{code}`)
 - **API Документация:** SpringDoc OpenAPI 3.0 / Swagger UI
 - **Безопасность и валидация:** Jakarta Validation, санитизация XSS/HTML и управляющих символов
-- **Тестирование:** JUnit 5 (Unit, Integration, Concurrency, WebSocket/STOMP), MockMvc, AssertJ, Mockito (224 теста)
+- **Тестирование:** JUnit 5 (Unit, Integration, Concurrency, WebSocket/STOMP, Deck Generation), MockMvc, AssertJ, Mockito (250 тестов)
 
 ---
 
@@ -88,6 +88,8 @@ chmod +x mvnw
 
 ### Структура тестов:
 1. **Модульные тесты (Unit Tests):**
+   - `DeckFactoryTest` — генерация колоды по реестру 108 карт (Таблица А.3), выборка по числу игроков для всех $N \in [4..12]$, инварианты стартовой раздачи (ровно 1 «Нечто», отсутствие паники и заражения на руках, ровно 4 карты каждому), сборка колоды добора.
+   - `CardModelTest` — доменные классы `Card`, `CardType` (`EVENT`, `PANIC`), `CardName` (31 имя карт, русские наименования, предикаты).
    - `PlayerTest` — доменная модель игрока `Player` (id, telegramId, username, isHost, connectedAt, конвертация, equals/hashCode).
    - `RoomModelTest` — доменная модель комнаты `Room` (code, name, maxPlayers, players, status, флаг готовности, управление игроками).
    - `InMemoryRoomRepositoryTest` — потокобезопасный in-memory репозиторий на базе `ConcurrentHashMap` (сохранение, регистронезависимый поиск, удаление, 20 конкурентных потоков).

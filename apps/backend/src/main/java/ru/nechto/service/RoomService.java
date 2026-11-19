@@ -2,6 +2,7 @@ package ru.nechto.service;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -28,6 +29,7 @@ import ru.nechto.exception.RoomNotFoundException;
 import ru.nechto.exception.TooManyPlayersException;
 import ru.nechto.exception.UnauthorizedException;
 import ru.nechto.model.ConnectionStatus;
+import ru.nechto.model.InitialDeal;
 import ru.nechto.model.Room;
 import ru.nechto.model.RoomParticipant;
 import ru.nechto.model.RoomStatus;
@@ -55,6 +57,7 @@ public class RoomService {
     private final RoomJpaRepository roomJpaRepository;
     private final RoomWebSocketBroadcaster broadcaster;
     private final RoomCodeGenerator codeGenerator;
+    private final DeckFactory deckFactory;
 
     @Value("${nechto.telegram.bot-username:StayAwayGameBot}")
     private String botUsername;
@@ -65,9 +68,18 @@ public class RoomService {
     public RoomService(RoomJpaRepository roomJpaRepository,
                        RoomWebSocketBroadcaster broadcaster,
                        RoomCodeGenerator codeGenerator) {
+        this(roomJpaRepository, broadcaster, codeGenerator, new DeckFactory());
+    }
+
+    @Autowired
+    public RoomService(RoomJpaRepository roomJpaRepository,
+                       RoomWebSocketBroadcaster broadcaster,
+                       RoomCodeGenerator codeGenerator,
+                       DeckFactory deckFactory) {
         this.roomJpaRepository = roomJpaRepository;
         this.broadcaster = broadcaster;
         this.codeGenerator = codeGenerator;
+        this.deckFactory = deckFactory != null ? deckFactory : new DeckFactory();
     }
 
     public Duration getHostDisconnectTimeout() {
@@ -418,6 +430,11 @@ public class RoomService {
         room.setLastActivityAt(now);
         roomJpaRepository.save(room);
 
+        List<String> participantTelegramIds = room.getParticipants().stream()
+                .map(RoomParticipantEntity::getTelegramId)
+                .toList();
+        InitialDeal initialDeal = deckFactory.deal(participantTelegramIds);
+
         Room domainRoom = RoomMapper.toDomain(room, botUsername);
         RoomResponse response = RoomResponse.from(domainRoom);
 
@@ -426,7 +443,8 @@ public class RoomService {
             broadcaster.broadcastRoomState(room.getCode(), response);
         });
 
-        log.info("Game started in room: code={}, playersCount={}", room.getCode(), playerCount);
+        log.info("Game started in room: code={}, playersCount={}, thingPlayer={}",
+                room.getCode(), playerCount, initialDeal.findTheThingPlayerId());
         return response;
     }
 

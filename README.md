@@ -14,7 +14,7 @@ Backend-сервис карточной психологической игры 
 - **Документация API:** OpenAPI 3.0 / Swagger UI (`springdoc-openapi`)
 - **Контейнеризация:** Docker & Docker Compose (Multi-stage build)
 - **CI/CD:** GitHub Actions CI (`.github/workflows/backend-ci.yml`)
-- **Тестирование:** JUnit 5, AssertJ, Mockito, Spring Boot Test, MockMvc (224 автоматических теста с JavaDoc)
+- **Тестирование:** JUnit 5, AssertJ, Mockito, Spring Boot Test, MockMvc (250 автоматических тестов с JavaDoc)
 
 ---
 
@@ -39,6 +39,7 @@ nechto-telegram-game/
 │       ├── be_3.md           # ТЗ: Тестирование, унификация ошибок, Swagger, CI
 │       ├── be_4.md           # ТЗ: Доменная модель и базовый API игровых комнат
 │       ├── be_5.md           # ТЗ: Реализация синхронизации лобби в реальном времени
+│       ├── be_6.md           # ТЗ: Генерация колоды карт и стартовая раздача
 │       └── src/              # Исходный код и тесты
 └── README.md                 # Документация проекта
 ```
@@ -113,7 +114,7 @@ chmod +x mvnw
 Полная спецификация всех HTTP-эндпоинтов, форматов запросов, единых кодов ошибок и протокола WebSocket находится в файле:
 👉 [**docs/API.md**](file:///C:/5sem/spo/nechto/nechto-telegram-game/docs/API.md)
 
-### Краткий обзор функционала (BE-1, BE-2, BE-3, BE-4, BE-5):
+### Краткий обзор функционала (BE-1, BE-2, BE-3, BE-4, BE-5, BE-6):
 1. **Lobby API:** Создание комнат (`POST /api/v1/rooms`), просмотр (`GET /api/v1/rooms/{code}`), вход (`POST /join`), выход (`POST /leave`), изменение настроек (`PATCH /settings`), запуск игры (`POST /start`).
 2. **PostgreSQL & Flyway:** Таблицы `rooms` и `room_participants` с внешними ключами `ON DELETE CASCADE` и `CHECK`-ограничениями.
 3. **Pessimistic Locking (`SELECT ... FOR UPDATE`):** Транзакционная защита от состояния гонки при одновременном занятии последнего места.
@@ -123,4 +124,5 @@ chmod +x mvnw
 7. **WebSocket & STOMP Synchronizer:** Мгновенная рассылка событий (`ROOM_STATE`, `room:state_sync`, `room:player_joined`, `room:player_left`, `room:host_changed`, `room:settings_updated`, `room:player_connection_changed`) строго после коммита транзакции в БД.
 8. **Host Migration & 5-минутный Grace Period (ТЗ 4.2.1):** Немедленная передача прав создателя при явном выходе хоста и 5-минутное удержание прав при внезапном сетевом обрыве (`SessionDisconnectEvent`).
 9. **Запуск игры:** Контроль диапазона участников (4–12 игроков) с переводом статуса комнаты в `IN_PROGRESS`.
-10. **GitHub Actions CI:** Автоматическая сборка, поднятие сервиса PostgreSQL и прогон всех 224 тестов при push/PR.
+10. **Генерация колоды и стартовая раздача (Приложение А, ТЗ 4.2.2):** Реестр 108 карт, выборка по порогу $N \in [4..12]$, формирование стартового набора (1 «Нечто» + $4N-1$ событий), раздача ровно по 4 карты на руку, формирование колоды добора (со всеми заражениями и паникой).
+11. **GitHub Actions CI:** Автоматическая сборка, поднятие сервиса PostgreSQL и прогон всех 250 тестов при push/PR.
