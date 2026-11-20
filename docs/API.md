@@ -599,3 +599,117 @@
 2. **Чистота стартовых рук:** карты паники (`PANIC`) и заражения (`INFECTION`) **гарантированно отсутствуют** на руках игроков при старте.
 3. **Раздача:** перемешанный стартовый набор раздаётся ровно по 4 карты на руку каждому участнику. Ровно один игрок получает карту «Нечто».
 4. **Колода добора:** формируется из всех оставшихся допустимых карт (включая все карты «Заражение!» и все карты «Паника» для данного $N$) и перемешивается.
+
+---
+
+## 7. Серверный сценарий запуска игровой партии (ТЗ 4.1.5, 4.2.4, 4.2.11)
+
+### 7.1. Рассадка за столом и порядок ходов
+- При старте список участников случайным образом перемешивается (`Random`).
+- Каждому игроку присваивается уникальная позиция за столом: от `0` до `N - 1`.
+- Направление передачи хода: **по часовой стрелке** (`TurnDirection.CLOCKWISE`).
+- Первый ход партии принадлежит игроку на позиции `0` (`currentTurnIndex = 0`, `currentTurnPlayerId = player[0].telegramId`).
+- Комната переходит в статус `IN_PROGRESS` (IN_GAME), подключение новых участников и изменение настроек блокируются. Повторный вызов старта возвращает ошибку `ROOM_ALREADY_STARTED` (HTTP 409).
+
+### 7.2. Назначение ролей (п. 4.2.4 ТЗ)
+- **`THE_THING` (Нечто):** назначается игроку, получившему при стартовой раздаче карту «Нечто» (ID 1). Ровно один игрок за столом.
+- **`HUMAN` (Человек):** назначается остальным $N - 1$ игрокам.
+- **`INFECTED` (Зараженный):** роль присваивается в ходе игры при получении карты «Заражение» от Нечто.
+
+### 7.3. Разделение и фильтрация WebSocket-сообщений (п. 4.1.5, 4.2.11, 4.5.1)
+
+#### 7.3.1. Публичное состояние `GAME_STATE` (`/topic/room/{code}`)
+Транслируется всем участникам комнаты. **Строго не содержит информации о ролях и закрытых картах на руках игроков**:
+```json
+{
+  "event": "GAME_STATE",
+  "type": "GAME_STATE",
+  "timestamp": "2026-11-20T12:00:00Z",
+  "data": {
+    "roomCode": "X7K9M2",
+    "status": "IN_PROGRESS",
+    "currentTurnIndex": 0,
+    "currentTurnPlayerId": "123456789",
+    "turnDirection": "CLOCKWISE",
+    "deckCardsCount": 39,
+    "discardCardsCount": 0,
+    "players": [
+      {
+        "telegramId": "123456789",
+        "username": "ivan_ivanov",
+        "displayName": "Иван",
+        "position": 0,
+        "cardsCount": 4,
+        "isAlive": true,
+        "quarantineRounds": 0,
+        "connectionStatus": "ONLINE"
+      },
+      {
+        "telegramId": "987654321",
+        "username": "petr_petrov",
+        "displayName": "Петр",
+        "position": 1,
+        "cardsCount": 4,
+        "isAlive": true,
+        "quarantineRounds": 0,
+        "connectionStatus": "ONLINE"
+      }
+    ]
+  }
+}
+```
+
+#### 7.3.2. Приватное состояние `PLAYER_PRIVATE_STATE` (`/user/queue/game`)
+Отправляется персонально каждому игроку в его защищенную личную очередь по STOMP:
+```json
+{
+  "event": "PLAYER_PRIVATE_STATE",
+  "type": "PLAYER_PRIVATE_STATE",
+  "timestamp": "2026-11-20T12:00:00Z",
+  "data": {
+    "roomCode": "X7K9M2",
+    "telegramId": "123456789",
+    "role": "THE_THING",
+    "position": 0,
+    "isMyTurn": true,
+    "availableActions": [
+      "DRAW_CARD"
+    ],
+    "cards": [
+      {
+        "id": 1,
+        "name": "THE_THING",
+        "type": "EVENT",
+        "minPlayers": 4,
+        "russianName": "Нечто",
+        "subType": "Нечто"
+      },
+      {
+        "id": 22,
+        "name": "FLAMETHROWER",
+        "type": "EVENT",
+        "minPlayers": 4,
+        "russianName": "Огнемёт",
+        "subType": "Событие"
+      },
+      {
+        "id": 30,
+        "name": "AXE",
+        "type": "EVENT",
+        "minPlayers": 4,
+        "russianName": "Топор",
+        "subType": "Событие"
+      },
+      {
+        "id": 32,
+        "name": "SUSPICION",
+        "type": "EVENT",
+        "minPlayers": 4,
+        "russianName": "Подозрение",
+        "subType": "Событие"
+      }
+    ]
+  }
+}
+```
+

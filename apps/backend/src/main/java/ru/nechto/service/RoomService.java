@@ -58,6 +58,7 @@ public class RoomService {
     private final RoomWebSocketBroadcaster broadcaster;
     private final RoomCodeGenerator codeGenerator;
     private final DeckFactory deckFactory;
+    private final GameStartService gameStartService;
 
     @Value("${nechto.telegram.bot-username:StayAwayGameBot}")
     private String botUsername;
@@ -68,18 +69,28 @@ public class RoomService {
     public RoomService(RoomJpaRepository roomJpaRepository,
                        RoomWebSocketBroadcaster broadcaster,
                        RoomCodeGenerator codeGenerator) {
-        this(roomJpaRepository, broadcaster, codeGenerator, new DeckFactory());
+        this(roomJpaRepository, broadcaster, codeGenerator, new DeckFactory(), null);
+    }
+
+    public RoomService(RoomJpaRepository roomJpaRepository,
+                       RoomWebSocketBroadcaster broadcaster,
+                       RoomCodeGenerator codeGenerator,
+                       DeckFactory deckFactory) {
+        this(roomJpaRepository, broadcaster, codeGenerator, deckFactory, null);
     }
 
     @Autowired
     public RoomService(RoomJpaRepository roomJpaRepository,
                        RoomWebSocketBroadcaster broadcaster,
                        RoomCodeGenerator codeGenerator,
-                       DeckFactory deckFactory) {
+                       DeckFactory deckFactory,
+                       @org.springframework.context.annotation.Lazy GameStartService gameStartService) {
         this.roomJpaRepository = roomJpaRepository;
         this.broadcaster = broadcaster;
         this.codeGenerator = codeGenerator;
         this.deckFactory = deckFactory != null ? deckFactory : new DeckFactory();
+        this.gameStartService = gameStartService != null ? gameStartService :
+                new GameStartService(roomJpaRepository, this.deckFactory, broadcaster);
     }
 
     public Duration getHostDisconnectTimeout() {
@@ -399,53 +410,7 @@ public class RoomService {
      */
     @Transactional
     public RoomResponse startGame(String code, String telegramId) {
-        if (telegramId == null || telegramId.isBlank()) {
-            throw new UnauthorizedException();
-        }
-        String normalizedCode = InputValidator.validateAndNormalizeRoomCode(code);
-
-        RoomEntity room = roomJpaRepository.findByCodeForUpdate(normalizedCode)
-                .filter(r -> r.getStatus() != RoomStatus.ARCHIVED)
-                .orElseThrow(RoomNotFoundException::new);
-
-        if (!telegramId.equals(room.getCreatorTelegramId())) {
-            throw new ForbiddenException("Только создатель комнаты может запустить игру");
-        }
-
-        if (room.getStatus() != RoomStatus.LOBBY) {
-            throw new RoomAlreadyStartedException("Игра уже началась");
-        }
-
-        int playerCount = room.getParticipants().size();
-        if (playerCount < 4) {
-            throw new NotEnoughPlayersException("Для старта игры необходимо минимум 4 игрока. Текущее количество: " + playerCount);
-        }
-        if (playerCount > 12) {
-            throw new TooManyPlayersException("Максимальное количество участников для партии: 12. Текущее количество: " + playerCount);
-        }
-
-        room.setStatus(RoomStatus.IN_PROGRESS);
-        Instant now = Instant.now();
-        room.setUpdatedAt(now);
-        room.setLastActivityAt(now);
-        roomJpaRepository.save(room);
-
-        List<String> participantTelegramIds = room.getParticipants().stream()
-                .map(RoomParticipantEntity::getTelegramId)
-                .toList();
-        InitialDeal initialDeal = deckFactory.deal(participantTelegramIds);
-
-        Room domainRoom = RoomMapper.toDomain(room, botUsername);
-        RoomResponse response = RoomResponse.from(domainRoom);
-
-        broadcastAfterCommit(() -> {
-            broadcaster.broadcastToRoom(room.getCode(), WsEvent.of("room:game_started", response));
-            broadcaster.broadcastRoomState(room.getCode(), response);
-        });
-
-        log.info("Game started in room: code={}, playersCount={}, thingPlayer={}",
-                room.getCode(), playerCount, initialDeal.findTheThingPlayerId());
-        return response;
+        return gameStartService.startGame(code, telegramId).roomResponse();
     }
 
     /**
