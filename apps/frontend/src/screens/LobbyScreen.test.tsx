@@ -4,9 +4,9 @@ import type { TelegramIdentity } from '../lib/telegram'
 import type { Room } from '../types/room'
 import { LobbyScreen } from './LobbyScreen'
 
-const { useRoomSocket } = vi.hoisted(() => ({ useRoomSocket: vi.fn() }))
+const { useGameSocket } = vi.hoisted(() => ({ useGameSocket: vi.fn() }))
 
-vi.mock('../hooks/useRoomSocket', () => ({ useRoomSocket }))
+vi.mock('../hooks/useRoomSocket', () => ({ useGameSocket }))
 
 const host: TelegramIdentity = { telegramId: '1', username: 'host', displayName: 'Хост' }
 
@@ -26,7 +26,7 @@ const room: Room = {
 
 describe('LobbyScreen', () => {
   it('shows a disabled start button to the host until four players are present', () => {
-    useRoomSocket.mockReturnValue({ room, status: 'open' })
+    useGameSocket.mockReturnValue({ room, status: 'open' })
 
     render(<LobbyScreen identity={host} initialRoom={room} onLeave={vi.fn()} />)
 
@@ -34,7 +34,7 @@ describe('LobbyScreen', () => {
   })
 
   it('does not expose the start action to a player who is not the host', () => {
-    useRoomSocket.mockReturnValue({ room: { ...room, currentPlayersCount: 4 }, status: 'open' })
+    useGameSocket.mockReturnValue({ room: { ...room, currentPlayersCount: 4 }, status: 'open' })
 
     render(
       <LobbyScreen
