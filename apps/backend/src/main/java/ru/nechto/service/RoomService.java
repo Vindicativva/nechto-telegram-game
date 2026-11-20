@@ -2,6 +2,7 @@ package ru.nechto.service;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -21,10 +22,14 @@ import ru.nechto.entity.RoomMapper;
 import ru.nechto.entity.RoomParticipantEntity;
 import ru.nechto.exception.ActiveRoomExistsException;
 import ru.nechto.exception.ForbiddenException;
+import ru.nechto.exception.NotEnoughPlayersException;
 import ru.nechto.exception.RoomAlreadyStartedException;
 import ru.nechto.exception.RoomFullException;
 import ru.nechto.exception.RoomNotFoundException;
+import ru.nechto.exception.TooManyPlayersException;
+import ru.nechto.exception.UnauthorizedException;
 import ru.nechto.model.ConnectionStatus;
+import ru.nechto.model.InitialDeal;
 import ru.nechto.model.Room;
 import ru.nechto.model.RoomParticipant;
 import ru.nechto.model.RoomStatus;
@@ -52,16 +57,48 @@ public class RoomService {
     private final RoomJpaRepository roomJpaRepository;
     private final RoomWebSocketBroadcaster broadcaster;
     private final RoomCodeGenerator codeGenerator;
+    private final DeckFactory deckFactory;
+    private final GameStartService gameStartService;
 
     @Value("${nechto.telegram.bot-username:StayAwayGameBot}")
     private String botUsername;
 
+    @Value("${nechto.lobby.host-disconnect-timeout:300s}")
+    private Duration hostDisconnectTimeout = Duration.ofMinutes(5);
+
     public RoomService(RoomJpaRepository roomJpaRepository,
                        RoomWebSocketBroadcaster broadcaster,
                        RoomCodeGenerator codeGenerator) {
+        this(roomJpaRepository, broadcaster, codeGenerator, new DeckFactory(), null);
+    }
+
+    public RoomService(RoomJpaRepository roomJpaRepository,
+                       RoomWebSocketBroadcaster broadcaster,
+                       RoomCodeGenerator codeGenerator,
+                       DeckFactory deckFactory) {
+        this(roomJpaRepository, broadcaster, codeGenerator, deckFactory, null);
+    }
+
+    @Autowired
+    public RoomService(RoomJpaRepository roomJpaRepository,
+                       RoomWebSocketBroadcaster broadcaster,
+                       RoomCodeGenerator codeGenerator,
+                       DeckFactory deckFactory,
+                       @org.springframework.context.annotation.Lazy GameStartService gameStartService) {
         this.roomJpaRepository = roomJpaRepository;
         this.broadcaster = broadcaster;
         this.codeGenerator = codeGenerator;
+        this.deckFactory = deckFactory != null ? deckFactory : new DeckFactory();
+        this.gameStartService = gameStartService != null ? gameStartService :
+                new GameStartService(roomJpaRepository, this.deckFactory, broadcaster);
+    }
+
+    public Duration getHostDisconnectTimeout() {
+        return hostDisconnectTimeout;
+    }
+
+    public void setHostDisconnectTimeout(Duration hostDisconnectTimeout) {
+        this.hostDisconnectTimeout = hostDisconnectTimeout;
     }
 
     @Transactional
@@ -114,7 +151,9 @@ public class RoomService {
 
         RoomEntity saved = roomJpaRepository.save(roomEntity);
         log.info("Room created: code={}, creatorId={}, name={}", code, creator.telegramId(), name);
-        return RoomResponse.from(RoomMapper.toDomain(saved, botUsername));
+        RoomResponse response = RoomResponse.from(RoomMapper.toDomain(saved, botUsername));
+        broadcastAfterCommit(() -> broadcaster.broadcastRoomState(code, response));
+        return response;
     }
 
     @Transactional(readOnly = true)
@@ -165,12 +204,16 @@ public class RoomService {
             room.setLastActivityAt(now);
             roomJpaRepository.save(room);
 
-            broadcastAfterCommit(() -> broadcaster.broadcastToRoom(room.getCode(),
-                    WsEvent.of("room:player_connection_changed",
-                            new PlayerConnectionChangedData(user.telegramId(), ConnectionStatus.ONLINE))));
+            RoomResponse response = RoomResponse.from(RoomMapper.toDomain(room, botUsername));
+            broadcastAfterCommit(() -> {
+                broadcaster.broadcastToRoom(room.getCode(),
+                        WsEvent.of("room:player_connection_changed",
+                                new PlayerConnectionChangedData(user.telegramId(), ConnectionStatus.ONLINE)));
+                broadcaster.broadcastRoomState(room.getCode(), response);
+            });
 
             log.info("Player reconnected: code={}, telegramId={}", room.getCode(), user.telegramId());
-            return RoomResponse.from(RoomMapper.toDomain(room, botUsername));
+            return response;
         }
 
         // New participant
@@ -203,9 +246,12 @@ public class RoomService {
         RoomParticipant domainParticipant = RoomMapper.toDomain(newParticipant);
         RoomResponse response = RoomResponse.from(domainRoom);
 
-        // Broadcast room:player_joined strictly after transaction commit
-        broadcastAfterCommit(() -> broadcaster.broadcastToRoom(room.getCode(),
-                WsEvent.of("room:player_joined", new PlayerJoinedData(domainParticipant, response))));
+        // Broadcast room:player_joined and ROOM_STATE strictly after transaction commit
+        broadcastAfterCommit(() -> {
+            broadcaster.broadcastToRoom(room.getCode(),
+                    WsEvent.of("room:player_joined", new PlayerJoinedData(domainParticipant, response)));
+            broadcaster.broadcastRoomState(room.getCode(), response);
+        });
 
         log.info("Player joined: code={}, telegramId={}, totalPlayers={}",
                 room.getCode(), user.telegramId(), room.getParticipants().size());
@@ -280,8 +326,11 @@ public class RoomService {
         RoomResponse response = RoomResponse.from(domainRoom);
 
         final String finalNewCreatorId = newCreatorId;
-        broadcastAfterCommit(() -> broadcaster.broadcastToRoom(room.getCode(),
-                WsEvent.of("room:player_left", new PlayerLeftData(telegramId, finalNewCreatorId, response))));
+        broadcastAfterCommit(() -> {
+            broadcaster.broadcastToRoom(room.getCode(),
+                    WsEvent.of("room:player_left", new PlayerLeftData(telegramId, finalNewCreatorId, response)));
+            broadcaster.broadcastRoomState(room.getCode(), response);
+        });
 
         return response;
     }
@@ -315,9 +364,12 @@ public class RoomService {
         Room domainRoom = RoomMapper.toDomain(room, botUsername);
         RoomResponse response = RoomResponse.from(domainRoom);
 
-        broadcastAfterCommit(() -> broadcaster.broadcastToRoom(room.getCode(),
-                WsEvent.of("room:settings_updated",
-                        new SettingsUpdatedData(maxPlayers, domainRoom.isReadyToStart(), response))));
+        broadcastAfterCommit(() -> {
+            broadcaster.broadcastToRoom(room.getCode(),
+                    WsEvent.of("room:settings_updated",
+                            new SettingsUpdatedData(maxPlayers, domainRoom.isReadyToStart(), response)));
+            broadcaster.broadcastRoomState(room.getCode(), response);
+        });
 
         log.info("Room settings updated: code={}, newMaxPlayers={}", room.getCode(), maxPlayers);
         return response;
@@ -342,10 +394,123 @@ public class RoomService {
                     room.setLastActivityAt(Instant.now());
                     roomJpaRepository.save(room);
 
-                    broadcastAfterCommit(() -> broadcaster.broadcastToRoom(room.getCode(),
-                            WsEvent.of("room:player_connection_changed",
-                                    new PlayerConnectionChangedData(telegramId, status))));
+                    Room domainRoom = RoomMapper.toDomain(room, botUsername);
+                    RoomResponse response = RoomResponse.from(domainRoom);
+                    broadcastAfterCommit(() -> {
+                        broadcaster.broadcastToRoom(room.getCode(),
+                                WsEvent.of("room:player_connection_changed",
+                                        new PlayerConnectionChangedData(telegramId, status)));
+                        broadcaster.broadcastRoomState(room.getCode(), response);
+                    });
                 });
+    }
+
+    /**
+     * Запуск игры создателем комнаты с валидацией числа участников (от 4 до 12 человек).
+     */
+    @Transactional
+    public RoomResponse startGame(String code, String telegramId) {
+        return gameStartService.startGame(code, telegramId).roomResponse();
+    }
+
+    /**
+     * Проверяет статус подключения текущего создателя комнаты и передает права хоста следующему
+     * участнику, если создатель отключен дольше заданного таймаута (по умолчанию 5 минут).
+     *
+     * @param code    код комнаты
+     * @param timeout предельный таймаут отсутствия хоста
+     * @return true, если произошла смена создателя
+     */
+    @Transactional
+    public boolean checkAndMigrateDisconnectedHost(String code, Duration timeout) {
+        String normalizedCode = InputValidator.validateAndNormalizeRoomCode(code);
+        Optional<RoomEntity> roomOpt = roomJpaRepository.findByCodeForUpdate(normalizedCode)
+                .filter(r -> r.getStatus() == RoomStatus.LOBBY || r.getStatus() == RoomStatus.IN_PROGRESS);
+        if (roomOpt.isEmpty()) return false;
+
+        RoomEntity room = roomOpt.get();
+        String currentCreatorId = room.getCreatorTelegramId();
+
+        Optional<RoomParticipantEntity> creatorOpt = room.getParticipants().stream()
+                .filter(p -> p.getTelegramId().equals(currentCreatorId))
+                .findFirst();
+
+        if (creatorOpt.isEmpty()) {
+            return migrateToNextHost(room, currentCreatorId);
+        }
+
+        RoomParticipantEntity creator = creatorOpt.get();
+        if (creator.getConnectionStatus() == ConnectionStatus.DISCONNECTED && creator.getDisconnectedAt() != null) {
+            Duration effectiveTimeout = timeout != null ? timeout : hostDisconnectTimeout;
+            Instant threshold = Instant.now().minus(effectiveTimeout);
+            if (!creator.getDisconnectedAt().isAfter(threshold)) {
+                log.info("Host disconnect grace period expired for room {}. Migrating host from {}",
+                        room.getCode(), currentCreatorId);
+                return migrateToNextHost(room, currentCreatorId);
+            }
+        }
+        return false;
+    }
+
+    private boolean migrateToNextHost(RoomEntity room, String oldCreatorId) {
+        List<RoomParticipantEntity> candidates = room.getParticipants().stream()
+                .filter(p -> !p.getTelegramId().equals(oldCreatorId))
+                .sorted(Comparator.comparing(RoomParticipantEntity::getJoinedAt))
+                .toList();
+
+        if (candidates.isEmpty()) {
+            return false;
+        }
+
+        RoomParticipantEntity nextHost = candidates.stream()
+                .filter(p -> p.getConnectionStatus() == ConnectionStatus.ONLINE)
+                .findFirst()
+                .orElse(candidates.get(0));
+
+        room.getParticipants().stream()
+                .filter(p -> p.getTelegramId().equals(oldCreatorId))
+                .findFirst()
+                .ifPresent(p -> p.setCreator(false));
+
+        nextHost.setCreator(true);
+        room.setCreatorTelegramId(nextHost.getTelegramId());
+        Instant now = Instant.now();
+        room.setUpdatedAt(now);
+        room.setLastActivityAt(now);
+        roomJpaRepository.save(room);
+
+        Room domainRoom = RoomMapper.toDomain(room, botUsername);
+        RoomResponse response = RoomResponse.from(domainRoom);
+
+        String newCreatorId = nextHost.getTelegramId();
+        broadcastAfterCommit(() -> {
+            broadcaster.broadcastToRoom(room.getCode(),
+                    WsEvent.of("room:host_changed",
+                            new HostChangedData(oldCreatorId, newCreatorId, domainRoom.getPlayers())));
+            broadcaster.broadcastRoomState(room.getCode(), response);
+        });
+
+        log.info("Host successfully migrated after disconnect timeout: room={}, oldHost={}, newHost={}",
+                room.getCode(), oldCreatorId, newCreatorId);
+        return true;
+    }
+
+    /**
+     * Фоновая периодическая проверка комнат на истечение 5-минутного таймаута удержания прав создателя.
+     */
+    @Scheduled(fixedRate = 5000)
+    @Transactional
+    public void processDisconnectedHosts() {
+        List<RoomEntity> activeRooms = roomJpaRepository.findAll();
+        for (RoomEntity room : activeRooms) {
+            if (room.getStatus() == RoomStatus.LOBBY || room.getStatus() == RoomStatus.IN_PROGRESS) {
+                try {
+                    checkAndMigrateDisconnectedHost(room.getCode(), hostDisconnectTimeout);
+                } catch (Exception e) {
+                    log.error("Failed to process disconnected host in room {}", room.getCode(), e);
+                }
+            }
+        }
     }
 
     @Scheduled(fixedRate = 60000)
