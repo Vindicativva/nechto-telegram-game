@@ -10,10 +10,10 @@
 - **Spring Boot:** 4
 - **ORM / СУБД:** Spring Data JPA (Hibernate 7) + PostgreSQL 16
 - **Миграции БД:** Flyway (схема `V1__init_rooms_and_participants.sql`)
-- **WebSocket:** Spring WebSocket Handler с thread-safe броадкастером сессий
+- **WebSocket:** Spring WebSocket Handler и брокер сообщений STOMP (`/ws-game`, `/topic/room/{code}`)
 - **API Документация:** SpringDoc OpenAPI 3.0 / Swagger UI
 - **Безопасность и валидация:** Jakarta Validation, санитизация XSS/HTML и управляющих символов
-- **Тестирование:** JUnit 5 (Unit, Integration, Concurrency, WebSocket), MockMvc, AssertJ, Mockito (202 теста)
+
 
 ---
 
@@ -29,6 +29,7 @@
 - `POST /api/rooms/{code}/join` — подключение к комнате
 - `POST /api/rooms/{code}/leave` — выход из комнаты
 - `PATCH /api/rooms/{code}/settings` — изменение вместимости хостом комнаты
+
 
 ---
 
@@ -98,5 +99,9 @@ chmod +x mvnw
    - `RoomConcurrencyIntegrationTest` — гонка 10 потоков за 1 свободное место (ровно 1 успешный вход, 9 отказов 409), параллельные дублирующие запросы.
 4. **Интеграционные тесты слоя БД:**
    - `RoomDatabaseIntegrationTest` — персистентность при перезапуске, Flyway-миграции, атомарность, безопасность.
-5. **WebSocket-тесты:**
+5. **WebSocket и STOMP тесты:**
    - `RoomWebSocketIntegrationTest` — начальный `room:state_sync`, `room:player_joined`, `room:player_left`, `room:host_changed`, `room:settings_updated`, `room:player_connection_changed`.
+   - `LobbyStompIntegrationTest` — STOMP `/ws-game` подключение, рассылка `ROOM_STATE`, идемпотентный реконнект без дубликатов, отказ при заполнении (`ROOM_FULL`) и начатой игре (`ROOM_ALREADY_STARTED`), передача прав при выходе, запуск игры хостом и отказ при < 4 игроках или не-хосте.
+   - `LobbyHostMigrationTest` — немедленная передача прав при явном выходе хоста, удержание прав в течение 5 минут при дисконнекте, автопередача по истечении 5 минут, сохранение прав при возвращении хоста до истечения таймаута, проверка диапазона 4–12 игроков.
+   - `RoomStartGameIntegrationTest` — REST эндпоинт `POST /api/rooms/{code}/start` (200 OK при 4 игроках, 409 NOT_ENOUGH_PLAYERS, 403 FORBIDDEN_NOT_CREATOR, 401 UNAUTHORIZED).
+   - `LobbyDisconnectEventListenerTest` — обработка `SessionDisconnectEvent`, перевод в `DISCONNECTED` с фиксацией таймаута.
