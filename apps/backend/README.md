@@ -13,7 +13,7 @@
 - **WebSocket:** Spring WebSocket Handler и брокер сообщений STOMP (`/ws-game`, `/topic/room/{code}`)
 - **API Документация:** SpringDoc OpenAPI 3.0 / Swagger UI
 - **Безопасность и валидация:** Jakarta Validation, санитизация XSS/HTML и управляющих символов
-- **Тестирование:** JUnit 5 (Unit, Integration, Concurrency, WebSocket/STOMP), MockMvc, AssertJ, Mockito (224 теста)
+
 
 ---
 
@@ -29,14 +29,7 @@
 - `POST /api/rooms/{code}/join` — подключение к комнате
 - `POST /api/rooms/{code}/leave` — выход из комнаты
 - `PATCH /api/rooms/{code}/settings` — изменение вместимости хостом комнаты
-- `POST /api/rooms/{code}/start` — запуск игры хостом (строгая валидация диапазона 4–12 игроков)
 
-### WebSocket STOMP эндпоинты (`/ws-game`):
-- Подключение: `ws://localhost:8080/ws-game`
-- Брокер топиков: `/topic/room/{code}` (рассылка события `ROOM_STATE`)
-- Команды: `/app/room/{code}/join`, `/app/room/{code}/leave`, `/app/room/{code}/start`
-- Топик ошибок: `/topic/room/{code}/errors` и `/user/queue/errors`
-- 5-минутный Grace Period хоста: при сетевом сбое (`SessionDisconnectEvent`) права хоста удерживаются 5 минут перед автопередачей игроку с самым ранним `joinedAt`
 
 ---
 
