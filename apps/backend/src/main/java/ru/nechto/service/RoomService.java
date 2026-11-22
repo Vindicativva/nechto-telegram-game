@@ -90,6 +90,14 @@ public class RoomService {
         this.hostDisconnectTimeout = hostDisconnectTimeout;
     }
 
+    public Duration getHostDisconnectTimeout() {
+        return hostDisconnectTimeout;
+    }
+
+    public void setHostDisconnectTimeout(Duration hostDisconnectTimeout) {
+        this.hostDisconnectTimeout = hostDisconnectTimeout;
+    }
+
     @Transactional
     public RoomResponse createRoom(TelegramUser creator, CreateRoomRequest request) {
         if (creator == null || creator.telegramId() == null || creator.telegramId().isBlank()) {
