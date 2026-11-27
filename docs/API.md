@@ -1,8 +1,10 @@
-# Документация REST API и WebSocket-протокола «Нечто» (Stay Away!)
+﻿# Документация REST API и WebSocket-протокола «Нечто» (Stay Away!)
 
 Данный документ содержит полное описание контрактов REST API и WebSocket-протокола бэкенда для интеграции с клиентом (Frontend / Telegram Mini App).
 
 > **Официальная спецификация протокола лобби (PO-4):** [docs/api/lobby-protocol.md](api/lobby-protocol.md) (содержит детальные схемы DTO, события JOIN_ROOM, LEAVE_ROOM, START_GAME, схему ROOM_STATE, Sequence-диаграммы и требования ТЗ 4.1.1.2 / 4.2.1).
+
+> **Официальная спецификация игрового протокола (PO-6):** [docs/api/gameplay-protocol.md](api/gameplay-protocol.md) (содержит спецификацию игрового стола, Zero Trust скрытой рассылки карт, 3 фаз хода DRAW/PLAY/EXCHANGE и клиентских команд).
 
 ---
 
