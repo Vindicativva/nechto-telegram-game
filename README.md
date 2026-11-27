@@ -14,7 +14,7 @@ Backend-сервис карточной психологической игры 
 - **Документация API:** OpenAPI 3.0 / Swagger UI (`springdoc-openapi`)
 - **Контейнеризация:** Docker & Docker Compose (Multi-stage build)
 - **CI/CD:** GitHub Actions CI (`.github/workflows/backend-ci.yml`)
-- **Тестирование:** JUnit 5, AssertJ, Mockito, Spring Boot Test, MockMvc (250 автоматических тестов с JavaDoc)
+- **Тестирование:** JUnit 5, AssertJ, Mockito, Spring Boot Test, MockMvc (273 автоматических теста с JavaDoc)
 
 ---
 
@@ -40,6 +40,7 @@ nechto-telegram-game/
 │       ├── be_4.md           # ТЗ: Доменная модель и базовый API игровых комнат
 │       ├── be_5.md           # ТЗ: Реализация синхронизации лобби в реальном времени
 │       ├── be_6.md           # ТЗ: Генерация колоды карт и стартовая раздача
+│       ├── be_7.md           # ТЗ: Серверный сценарий запуска партии, роли, GAME_STATE и приватные очереди
 │       └── src/              # Исходный код и тесты
 └── README.md                 # Документация проекта
 ```
@@ -83,7 +84,7 @@ docker compose down -v
 - Maven Wrapper (`mvnw` / `mvnw.cmd` входит в состав репозитория)
 
 ### Запуск тестов
-Все 202 теста запускаются автономно одной командой (используется встроенный профиль H2 в режиме совместимости с PostgreSQL, не требующий внешних зависимостей):
+Все 273 теста запускаются автономно одной командой (используется встроенный профиль H2 в режиме совместимости с PostgreSQL, не требующий внешних зависимостей):
 
 ```bash
 cd apps/backend
@@ -114,15 +115,17 @@ chmod +x mvnw
 Полная спецификация всех HTTP-эндпоинтов, форматов запросов, единых кодов ошибок и протокола WebSocket находится в файле:
 👉 [**docs/API.md**](file:///C:/5sem/spo/nechto/nechto-telegram-game/docs/API.md)
 
-### Краткий обзор функционала (BE-1, BE-2, BE-3, BE-4, BE-5, BE-6):
+### Краткий обзор функционала (BE-1, BE-2, BE-3, BE-4, BE-5, BE-6, BE-7):
 1. **Lobby API:** Создание комнат (`POST /api/v1/rooms`), просмотр (`GET /api/v1/rooms/{code}`), вход (`POST /join`), выход (`POST /leave`), изменение настроек (`PATCH /settings`), запуск игры (`POST /start`).
 2. **PostgreSQL & Flyway:** Таблицы `rooms` и `room_participants` с внешними ключами `ON DELETE CASCADE` и `CHECK`-ограничениями.
 3. **Pessimistic Locking (`SELECT ... FOR UPDATE`):** Транзакционная защита от состояния гонки при одновременном занятии последнего места.
-4. **Унификация ошибок:** Единый ответ `@RestControllerAdvice` и `@MessageExceptionHandler` со стандартизированными кодами (`ROOM_FULL`, `ROOM_NOT_FOUND`, `VALIDATION_ERROR`, `FORBIDDEN_NOT_CREATOR`, `NOT_ENOUGH_PLAYERS`, `TOO_MANY_PLAYERS` и др.).
+4. **Унификация ошибок:** Единый ответ `@RestControllerAdvice` и `@MessageExceptionHandler` со стандартизированными кодами (`ROOM_FULL`, `ROOM_NOT_FOUND`, `VALIDATION_ERROR`, `FORBIDDEN_NOT_CREATOR`, `NOT_ENOUGH_PLAYERS`, `TOO_MANY_PLAYERS`, `ROOM_ALREADY_STARTED` и др.).
 5. **Маскирование внутренних ошибок:** Статус 500 никогда не возвращает клиенту детали SQL, имена таблиц или Java stacktrace.
 6. **OpenAPI / Swagger:** Полная автогенерация схемы OpenAPI и Swagger UI.
-7. **WebSocket & STOMP Synchronizer:** Мгновенная рассылка событий (`ROOM_STATE`, `room:state_sync`, `room:player_joined`, `room:player_left`, `room:host_changed`, `room:settings_updated`, `room:player_connection_changed`) строго после коммита транзакции в БД.
+7. **WebSocket & STOMP Synchronizer:** Мгновенная рассылка событий (`ROOM_STATE`, `GAME_STATE`, `room:state_sync`, `room:player_joined`, `room:player_left`, `room:host_changed`, `room:settings_updated`, `room:player_connection_changed`) строго после коммита транзакции в БД.
 8. **Host Migration & 5-минутный Grace Period (ТЗ 4.2.1):** Немедленная передача прав создателя при явном выходе хоста и 5-минутное удержание прав при внезапном сетевом обрыве (`SessionDisconnectEvent`).
-9. **Запуск игры:** Контроль диапазона участников (4–12 игроков) с переводом статуса комнаты в `IN_PROGRESS`.
+9. **Запуск игры:** Контроль диапазона участников (4–12 игроков) с переводом статуса комнаты в `IN_PROGRESS` (IN_GAME) и блокировкой повторного старта (`ROOM_ALREADY_STARTED`).
 10. **Генерация колоды и стартовая раздача (Приложение А, ТЗ 4.2.2):** Реестр 108 карт, выборка по порогу $N \in [4..12]$, формирование стартового набора (1 «Нечто» + $4N-1$ событий), раздача ровно по 4 карты на руку, формирование колоды добора (со всеми заражениями и паникой).
-11. **GitHub Actions CI:** Автоматическая сборка, поднятие сервиса PostgreSQL и прогон всех 250 тестов при push/PR.
+11. **Серверный запуск партии, рассадка и роли (ТЗ 4.1.5, 4.2.4, 4.2.11):** Сервис `GameStartService`, случайная рассадка за столом (позиции 0..N-1), порядок ходов по часовой стрелке (`CLOCKWISE`), первый ход у игрока на позиции 0, автоматическое назначение роли `THE_THING` держателю карты №1 («Нечто») и `HUMAN` остальным $N-1$ участникам.
+12. **Защита данных и раздельная фильтрация:** Публичное состояние `GAME_STATE` в `/topic/room/{code}` (строго без карт и ролей) и персональное приватное состояние `PLAYER_PRIVATE_STATE` в личную очередь `/user/queue/game`.
+13. **GitHub Actions CI:** Автоматическая сборка, поднятие сервиса PostgreSQL и прогон всех 273 тестов при push/PR.

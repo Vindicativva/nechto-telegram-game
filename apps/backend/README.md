@@ -13,7 +13,7 @@
 - **WebSocket:** Spring WebSocket Handler и брокер сообщений STOMP (`/ws-game`, `/topic/room/{code}`)
 - **API Документация:** SpringDoc OpenAPI 3.0 / Swagger UI
 - **Безопасность и валидация:** Jakarta Validation, санитизация XSS/HTML и управляющих символов
-- **Тестирование:** JUnit 5 (Unit, Integration, Concurrency, WebSocket/STOMP, Deck Generation), MockMvc, AssertJ, Mockito (250 тестов)
+- **Тестирование:** JUnit 5 (Unit, Integration, Concurrency, WebSocket/STOMP, Deck Generation, Game Start & State Filtering), MockMvc, AssertJ, Mockito (273 теста)
 
 ---
 
@@ -32,8 +32,9 @@
 - `POST /api/rooms/{code}/start` — запуск игры хостом (строгая валидация диапазона 4–12 игроков)
 
 ### WebSocket STOMP эндпоинты (`/ws-game`):
-- Подключение: `ws://localhost:8080/ws-game`
-- Брокер топиков: `/topic/room/{code}` (рассылка события `ROOM_STATE`)
+- Подключение: `ws://localhost:8080/ws-game` (аутентификация Principal через header `telegramId` или query-параметр)
+- Брокер топиков: `/topic/room/{code}` (рассылка событий `ROOM_STATE` и публичного `GAME_STATE`)
+- Личные защищенные очереди: `/user/queue/game` (рассылка скрытого `PLAYER_PRIVATE_STATE` с ролью и картами)
 - Команды: `/app/room/{code}/join`, `/app/room/{code}/leave`, `/app/room/{code}/start`
 - Топик ошибок: `/topic/room/{code}/errors` и `/user/queue/errors`
 - 5-минутный Grace Period хоста: при сетевом сбое (`SessionDisconnectEvent`) права хоста удерживаются 5 минут перед автопередачей игроку с самым ранним `joinedAt`
@@ -88,6 +89,7 @@ chmod +x mvnw
 
 ### Структура тестов:
 1. **Модульные тесты (Unit Tests):**
+   - `GameStartServiceTest` — рассадка игроков за столом (позиции 0..N-1), направление хода CLOCKWISE, раздача по 4 карты каждому, автоматическое назначение ролей (THE_THING ровно 1 держателю карты №1, остальным N-1 участникам HUMAN), перевод статуса в IN_PROGRESS (IN_GAME), безопасность публичного GAME_STATE (полное отсутствие карт и ролей), блокировка повторного запуска (RoomAlreadyStartedException), валидация хоста и лимитов 4–12 игроков, жизненный цикл ActiveGameState в памяти.
    - `DeckFactoryTest` — генерация колоды по реестру 108 карт (Таблица А.3), выборка по числу игроков для всех $N \in [4..12]$, инварианты стартовой раздачи (ровно 1 «Нечто», отсутствие паники и заражения на руках, ровно 4 карты каждому), сборка колоды добора.
    - `CardModelTest` — доменные классы `Card`, `CardType` (`EVENT`, `PANIC`), `CardName` (31 имя карт, русские наименования, предикаты).
    - `PlayerTest` — доменная модель игрока `Player` (id, telegramId, username, isHost, connectedAt, конвертация, equals/hashCode).
@@ -109,6 +111,7 @@ chmod +x mvnw
 4. **Интеграционные тесты слоя БД:**
    - `RoomDatabaseIntegrationTest` — персистентность при перезапуске, Flyway-миграции, атомарность, безопасность.
 5. **WebSocket и STOMP тесты:**
+   - `GameStartStompIntegrationTest` — сквозной STOMP запуск игры (`/app/room/{code}/start`), проверка рассылки `GAME_STATE` в топик комнаты без ролей и карт, персональная доставка скрытого `PLAYER_PRIVATE_STATE` каждому игроку в `/user/queue/game`, отказ при повторном запуске (`ROOM_ALREADY_STARTED`).
    - `RoomWebSocketIntegrationTest` — начальный `room:state_sync`, `room:player_joined`, `room:player_left`, `room:host_changed`, `room:settings_updated`, `room:player_connection_changed`.
    - `LobbyStompIntegrationTest` — STOMP `/ws-game` подключение, рассылка `ROOM_STATE`, идемпотентный реконнект без дубликатов, отказ при заполнении (`ROOM_FULL`) и начатой игре (`ROOM_ALREADY_STARTED`), передача прав при выходе, запуск игры хостом и отказ при < 4 игроках или не-хосте.
    - `LobbyHostMigrationTest` — немедленная передача прав при явном выходе хоста, удержание прав в течение 5 минут при дисконнекте, автопередача по истечении 5 минут, сохранение прав при возвращении хоста до истечения таймаута, проверка диапазона 4–12 игроков.

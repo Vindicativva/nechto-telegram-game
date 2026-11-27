@@ -107,6 +107,53 @@ public class RoomWebSocketBroadcaster {
         broadcastToRoom(roomCode, RoomStateEvent.of(roomResponse));
     }
 
+    /**
+     * Транслирует публичное состояние игры GAME_STATE в топик /topic/room/{code} и сессии комнаты.
+     *
+     * @param roomCode код комнаты
+     * @param payload  публичное событие GameStateEvent
+     */
+    public void broadcastGameState(String roomCode, Object payload) {
+        broadcastToRoom(roomCode, payload);
+    }
+
+    /**
+     * Отправляет персональное скрытое состояние PLAYER_PRIVATE_STATE игроку в его очередь /user/queue/game.
+     *
+     * @param telegramId ID пользователя в Telegram
+     * @param payload    персональное событие PlayerPrivateStateEvent
+     */
+    public void sendPrivateState(String telegramId, Object payload) {
+        if (telegramId == null || payload == null) return;
+        try {
+            String json = objectMapper.writeValueAsString(payload);
+
+            // 1. STOMP /user/queue/game
+            if (messagingTemplate != null) {
+                messagingTemplate.convertAndSendToUser(telegramId, "/queue/game", json);
+            }
+
+            // 2. Отправка в прямые WebSocket-сессии пользователя
+            for (SessionMeta meta : sessionMetaMap.values()) {
+                if (telegramId.equals(meta.telegramId())) {
+                    for (Set<WebSocketSession> sessions : roomSessions.values()) {
+                        for (WebSocketSession session : sessions) {
+                            if (session.getId().equals(meta.sessionId()) && session.isOpen()) {
+                                synchronized (session) {
+                                    if (session.isOpen()) {
+                                        session.sendMessage(new TextMessage(json));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.error("Failed to send private state to user {}", telegramId, e);
+        }
+    }
+
     public void broadcastToRoomExcept(String roomCode, Object payload, WebSocketSession excludedSession) {
         String normalized = normalizeCode(roomCode);
 
